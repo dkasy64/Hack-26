@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+const HOMESERVER_STORAGE_KEY = 'hackqu.lastHomeserver';
 
 interface Props {
   onLogin: (username: string, password: string, homeserver: string) => void | Promise<void>;
@@ -8,11 +10,18 @@ interface Props {
 }
 
 export function LoginScreen({ onLogin, onRegister, isLoading, error }: Props) {
-  const [homeserver, setHomeserver] = useState('http://localhost:8008');
+  const [homeserver, setHomeserver] = useState(() => {
+    const saved = window.localStorage.getItem(HOMESERVER_STORAGE_KEY);
+    return saved && saved.trim().length > 0 ? saved : 'http://localhost:8008';
+  });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegisterMode, setIsRegisterMode] = useState(false);
+
+  useEffect(() => {
+    window.localStorage.setItem(HOMESERVER_STORAGE_KEY, homeserver);
+  }, [homeserver]);
 
   const canSubmit =
     homeserver.trim().length > 0
