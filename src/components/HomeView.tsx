@@ -566,7 +566,7 @@ function MessageRow({
       <div>
         <div className="flex items-baseline gap-2">
           <button
-            onClick={() => setProfileModalUserId(message.sender)}
+            onClick={() => onClickUsername(message.sender)}
             className="text-sm font-semibold text-white hover:underline"
           >
             {displayName}
