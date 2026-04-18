@@ -58,35 +58,37 @@ export async function registerWithPassword(
 
 // ─── Spaces / Rooms ──────────────────────────────────────────────────────────
 
+const API_URL = import.meta.env.VITE_API_URL as string;
+
 export interface CreateSpaceOptions {
   name: string;
   topic?: string;
 }
 
 /**
- * Creates a Matrix "Space" (private, invite-only room).
- * Returns the new room's roomId.
+ * Creates a Matrix Space via the AWS Lambda orchestrator.
+ * The Lambda uses a Synapse admin token to enforce privacy settings server-side.
  */
 export async function createSpace(options: CreateSpaceOptions): Promise<string> {
   const c = getClient();
 
-  const result = await c.createRoom({
-    name: options.name,
-    topic: options.topic,
-    preset: sdk.Preset.PrivateChat,   // invite-only by default
-    visibility: sdk.Visibility.Private,
-    creation_content: {
-      // Mark as a Space per MSC1772
-      type: 'm.space',
-    },
-    power_level_content_override: {
-      // Room creator is admin (100)
-      users_default: 0,
-      events_default: 50,
-    },
+  const resp = await fetch(`${API_URL}/spaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: options.name,
+      topic: options.topic ?? '',
+      createdBy: c.getUserId(),
+    }),
   });
 
-  return result.room_id;
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error ?? `Space creation failed (${resp.status})`);
+  }
+
+  const { roomId } = await resp.json();
+  return roomId;
 }
 
 /**
