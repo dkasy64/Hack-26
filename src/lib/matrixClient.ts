@@ -840,3 +840,25 @@ export function getRoomHistory(
     .filter((e) => e.getType() === 'm.room.message')
     .slice(-limit);
 }
+
+// ─── User Profile ────────────────────────────────────────────────────────────
+
+export async function getUserProfile(userId: string): Promise<{ displayName?: string; avatarUrl?: string }> {
+  const c = getClient();
+  const profile = await c.getProfileInfo(userId);
+  return {
+    displayName: profile.displayname,
+    avatarUrl: profile.avatar_url,
+  };
+}
+
+export async function getBio(): Promise<string> {
+  const c = getClient();
+  const accountData = c.getAccountData('org.example.bio');
+  return accountData?.getContent()?.bio ?? '';
+}
+
+export async function setBio(bio: string): Promise<void> {
+  const c = getClient();
+  await c.setAccountData('org.example.bio', { bio });
+}

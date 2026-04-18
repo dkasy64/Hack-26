@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { sendMessage, onRoomMessage, getRoomHistory, getClient } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
+import { ProfileModal } from './ProfileModal';
 
 interface Message {
   eventId: string;
@@ -229,6 +230,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
   const [callOpen, setCallOpen] = useState(false);
   const [isInitiator, setIsInitiator] = useState(false);
   const [incomingCall, setIncomingCall] = useState<{ caller: string } | null>(null);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const callOpenRef = useRef(false);
@@ -327,7 +329,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((msg) => (
-          <MessageRow key={msg.eventId} message={msg} myUserId={matrixClient.getUserId() ?? ''} />
+          <MessageRow key={msg.eventId} message={msg} myUserId={matrixClient.getUserId() ?? ''} onClickUsername={setProfileModalUserId} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -383,6 +385,9 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           isInitiator={isInitiator}
         />
       )}
+      {profileModalUserId && (
+        <ProfileModal userId={profileModalUserId} onClose={() => setProfileModalUserId(null)} />
+      )}
     </main>
   );
 }
@@ -396,7 +401,7 @@ function eventToMessage(event: MatrixEvent): Message {
   };
 }
 
-function MessageRow({ message, myUserId }: { message: Message; myUserId: string }) {
+function MessageRow({ message, myUserId, onClickUsername }: { message: Message; myUserId: string; onClickUsername: (userId: string) => void }) {
   const isMe = message.sender === myUserId;
   const displayName = message.sender.split(':')[0].replace('@', '');
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -408,7 +413,12 @@ function MessageRow({ message, myUserId }: { message: Message; myUserId: string 
       </div>
       <div>
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold text-white">{displayName}</span>
+          <button
+            onClick={() => onClickUsername(message.sender)}
+            className="text-sm font-semibold text-white hover:underline"
+          >
+            {displayName}
+          </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
         </div>
         <p className="text-sm text-[#dcddde]">{message.body}</p>

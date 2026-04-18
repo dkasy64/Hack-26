@@ -4,6 +4,7 @@ import {
   acceptInvite,
   createOrGetDirectMessage,
   createGroupDirectMessage,
+  getBio,
   getDirectMessageRooms,
   getPendingInvites,
   getRoomHistory,
@@ -13,10 +14,12 @@ import {
   onRoomMessage,
   resolveMxcAvatarUrl,
   sendMessage,
+  setBio,
   type DirectMessageInfo,
   type PendingInviteInfo,
 } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
+import { ProfileModal } from './ProfileModal';
 
 interface Message {
   eventId: string;
@@ -49,6 +52,8 @@ export function HomeView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [bio, setBioState] = useState('');
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -87,8 +92,16 @@ export function HomeView({
   }, [activeDmRoomId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const loadBio = async () => {
+      try {
+        const bioData = await getBio();
+        setBioState(bioData);
+      } catch (error) {
+        console.error('Failed to load bio:', error);
+      }
+    };
+    loadBio();
+  }, []);
 
   async function handleAddFriendAndDm() {
     if (!friendInput.trim()) return;
@@ -130,6 +143,15 @@ export function HomeView({
     if (!activeDmRoomId || !draft.trim()) return;
     await sendMessage(activeDmRoomId, draft.trim());
     setDraft('');
+  }
+
+  async function handleSaveBio() {
+    try {
+      await setBio(bio);
+      setStatus('Bio updated.');
+    } catch (error) {
+      setError('Failed to update bio.');
+    }
   }
 
   async function handleCreateGroupDm() {
@@ -230,28 +252,21 @@ export function HomeView({
         </div>
 
         <div className="border-b border-[#1e1f22] p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Invites</p>
-          {pendingInvites.length === 0 ? (
-            <p className="text-xs text-[#949ba4]">No pending invites.</p>
-          ) : (
-            <div className="space-y-1">
-              {pendingInvites.map((invite) => (
-                <div key={invite.roomId} className="rounded bg-[#1e1f22] px-2 py-1.5">
-                  <p className="truncate text-xs font-semibold text-white">{invite.name}</p>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <span className="text-[10px] uppercase tracking-wide text-[#949ba4]">{invite.kind}</span>
-                    <button
-                      onClick={() => handleAcceptInvite(invite)}
-                      disabled={isBusy}
-                      className="rounded bg-green-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-green-500 disabled:opacity-50"
-                    >
-                      Accept
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Your Bio</p>
+          <textarea
+            value={bio}
+            onChange={(e) => setBioState(e.target.value)}
+            placeholder="Tell others about yourself..."
+            rows={3}
+            className="w-full rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+          />
+          <button
+            onClick={handleSaveBio}
+            disabled={!bio.trim() || isBusy}
+            className="mt-2 rounded bg-indigo-600 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            Save Bio
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
@@ -338,6 +353,7 @@ export function HomeView({
                     myUserId={matrixClient.getUserId() ?? ''}
                     matrixClient={matrixClient}
                     roomId={activeDmRoomId}
+                    onClickUsername={setProfileModalUserId}
                   />
                 ))}
               </div>
@@ -384,6 +400,9 @@ export function HomeView({
           </>
         )}
       </main>
+      {profileModalUserId && (
+        <ProfileModal userId={profileModalUserId} onClose={() => setProfileModalUserId(null)} />
+      )}
     </div>
   );
 }
@@ -402,11 +421,13 @@ function MessageRow({
   myUserId,
   matrixClient,
   roomId,
+  onClickUsername,
 }: {
   message: Message;
   myUserId: string;
   matrixClient: MatrixClient;
   roomId: string;
+  onClickUsername: (userId: string) => void;
 }) {
   const isMe = message.sender === myUserId;
   const room = matrixClient.getRoom(roomId);
@@ -427,7 +448,12 @@ function MessageRow({
       )}
       <div>
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold text-white">{displayName}</span>
+          <button
+            onClick={() => setProfileModalUserId(message.sender)}
+            className="text-sm font-semibold text-white hover:underline"
+          >
+            {displayName}
+          </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
         </div>
         <p className="text-sm text-[#dcddde]">{message.body}</p>
