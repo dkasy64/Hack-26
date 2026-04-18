@@ -9,6 +9,7 @@ import {
   onDirectMessagesChanged,
   onPendingInvitesChanged,
   onRoomMessage,
+  resolveMxcAvatarUrl,
   sendMessage,
   type DirectMessageInfo,
   type PendingInviteInfo,
@@ -236,7 +237,13 @@ export function HomeView({
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="space-y-3">
                 {messages.map((msg) => (
-                  <MessageRow key={msg.eventId} message={msg} myUserId={matrixClient.getUserId() ?? ''} />
+                  <MessageRow
+                    key={msg.eventId}
+                    message={msg}
+                    myUserId={matrixClient.getUserId() ?? ''}
+                    matrixClient={matrixClient}
+                    roomId={activeDmRoomId}
+                  />
                 ))}
               </div>
               <div ref={bottomRef} />
@@ -276,16 +283,34 @@ function eventToMessage(event: MatrixEvent): Message {
   };
 }
 
-function MessageRow({ message, myUserId }: { message: Message; myUserId: string }) {
+function MessageRow({
+  message,
+  myUserId,
+  matrixClient,
+  roomId,
+}: {
+  message: Message;
+  myUserId: string;
+  matrixClient: MatrixClient;
+  roomId: string;
+}) {
   const isMe = message.sender === myUserId;
-  const displayName = message.sender.split(':')[0].replace('@', '');
+  const room = matrixClient.getRoom(roomId);
+  const member = room?.getMember(message.sender);
+  const displayName = member?.name || matrixClient.getUser(message.sender)?.displayName || message.sender.split(':')[0].replace('@', '');
+  const avatarMxc = member?.getMxcAvatarUrl() || matrixClient.getUser(message.sender)?.avatarUrl || null;
+  const avatarUrl = resolveMxcAvatarUrl(avatarMxc);
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className={`flex items-start gap-3 ${isMe ? '' : ''}`}>
-      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-        {displayName.slice(0, 2).toUpperCase()}
-      </div>
+      {avatarUrl ? (
+        <img src={avatarUrl} alt={`${displayName} avatar`} className="h-8 w-8 flex-shrink-0 rounded-full object-cover" />
+      ) : (
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+          {displayName.slice(0, 2).toUpperCase()}
+        </div>
+      )}
       <div>
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-white">{displayName}</span>

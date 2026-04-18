@@ -97,6 +97,37 @@ export interface CurrentUserProfile {
   avatarUrl: string | null;
 }
 
+export function resolveMxcAvatarUrl(mxcUrl: string | null | undefined): string | null {
+  if (!mxcUrl) return null;
+
+  const c = getClient();
+
+  const directUrl = c.mxcUrlToHttp(
+    mxcUrl,
+    undefined,
+    undefined,
+    undefined,
+    true,
+    false
+  );
+
+  if (directUrl) return directUrl;
+
+  if (!mxcUrl.startsWith('mxc://')) return mxcUrl;
+
+  const withoutScheme = mxcUrl.slice('mxc://'.length);
+  const separator = withoutScheme.indexOf('/');
+  if (separator < 0) return null;
+
+  const server = encodeURIComponent(withoutScheme.slice(0, separator));
+  const mediaId = encodeURIComponent(withoutScheme.slice(separator + 1));
+  const baseUrl = c.getHomeserverUrl().replace(/\/+$/, '');
+  const accessToken = c.getAccessToken();
+  const query = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : '';
+
+  return `${baseUrl}/_matrix/media/v3/download/${server}/${mediaId}${query}`;
+}
+
 function localpartFromUserId(userId: string): string {
   return userId.replace(/^@/, '').split(':')[0] || 'You';
 }
@@ -109,7 +140,7 @@ export function getCurrentUserProfile(): CurrentUserProfile {
   const user = c.getUser(userId);
   const displayName = user?.displayName || localpartFromUserId(userId);
   const avatarMxcUrl = user?.avatarUrl ?? null;
-  const avatarUrl = avatarMxcUrl ? c.mxcUrlToHttp(avatarMxcUrl) ?? null : null;
+  const avatarUrl = resolveMxcAvatarUrl(avatarMxcUrl);
 
   return {
     userId,
@@ -153,7 +184,7 @@ export async function updateCurrentUserProfile(options: {
   } | null);
 
   const avatarMxcUrl = refreshed?.avatar_url ?? c.getUser(userId)?.avatarUrl ?? null;
-  const avatarUrl = avatarMxcUrl ? c.mxcUrlToHttp(avatarMxcUrl) ?? null : null;
+  const avatarUrl = resolveMxcAvatarUrl(avatarMxcUrl);
 
   return {
     userId,
@@ -494,10 +525,13 @@ export function getDirectMessageRooms(): DirectMessageInfo[] {
     .map((room) => {
       const peerUserId = resolveDmPeerUserId(room, myUserId);
       const fallback = peerUserId ? peerUserId.replace(/^@/, '').split(':')[0] : 'Direct Message';
+      const peerDisplayName = peerUserId
+        ? room.getMember(peerUserId)?.name || c.getUser(peerUserId)?.displayName || fallback
+        : fallback;
 
       return {
         roomId: room.roomId,
-        name: room.name || fallback,
+        name: peerDisplayName,
         peerUserId,
       };
     })
