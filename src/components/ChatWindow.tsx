@@ -165,9 +165,10 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
   }
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-black">
-      <div className="flex h-10 items-center justify-between bg-[#1e1f22] px-4">
-        <span className="text-sm font-semibold text-white">
+    <div className="pointer-events-none absolute inset-0 z-20 flex items-end justify-end p-4">
+      <div className="pointer-events-auto w-[360px] overflow-hidden rounded-xl border border-[#404249] bg-[#1e1f22] shadow-2xl">
+      <div className="flex h-10 items-center justify-between border-b border-[#404249] bg-[#1e1f22] px-3">
+        <span className="truncate text-xs font-semibold text-white">
           Voice / Video —{' '}
           {status === 'waiting' && 'Waiting for others...'}
           {status === 'connecting' && 'Connecting...'}
@@ -177,18 +178,19 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
           Leave Call
         </button>
       </div>
-      <div className="relative flex-1 bg-[#1e1f22]">
+      <div className="relative h-52 bg-[#1e1f22]">
         <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
-        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]" />
+        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-2 right-2 h-20 w-28 rounded-md object-cover border border-[#404249]" />
         {status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <div className="text-4xl">📹</div>
-            <p className="text-[#b5bac1] text-sm font-semibold">
+            <p className="text-[#b5bac1] text-xs font-semibold">
               {status === 'waiting' ? 'Waiting for others to join...' : 'Connecting...'}
             </p>
-            <p className="text-[#6d6f78] text-xs">Share this channel with your team</p>
+            <p className="text-[#6d6f78] text-[11px]">You can keep chatting while this call stays open.</p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

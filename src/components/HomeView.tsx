@@ -4,7 +4,6 @@ import {
   acceptInvite,
   createOrGetDirectMessage,
   createGroupDirectMessage,
-  getBio,
   getDirectMessageRooms,
   getRoomMembers,
   getRoomMembershipEvents,
@@ -19,7 +18,6 @@ import {
   onRoomMessage,
   resolveMxcAvatarUrl,
   sendMessage,
-  setBio,
   type DirectMessageInfo,
   type PendingInviteInfo,
   type RoomMemberInfo,
@@ -62,7 +60,6 @@ export function HomeView({
   const [groupInviteInput, setGroupInviteInput] = useState('');
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [bio, setBioState] = useState('');
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,18 +126,6 @@ export function HomeView({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    const loadBio = async () => {
-      try {
-        const bioData = await getBio();
-        setBioState(bioData);
-      } catch (error) {
-        console.error('Failed to load bio:', error);
-      }
-    };
-    loadBio();
-  }, []);
-
   async function handleAddFriendAndDm() {
     if (!friendInput.trim()) return;
     setError(null);
@@ -181,15 +166,6 @@ export function HomeView({
     if (!activeDmRoomId || !draft.trim()) return;
     await sendMessage(activeDmRoomId, draft.trim());
     setDraft('');
-  }
-
-  async function handleSaveBio() {
-    try {
-      await setBio(bio);
-      setStatus('Bio updated.');
-    } catch (error) {
-      setError('Failed to update bio.');
-    }
   }
 
   async function handleCreateGroupDm() {
@@ -305,24 +281,6 @@ export function HomeView({
               Create Group
             </button>
           </div>
-        </div>
-
-        <div className="border-b border-[#1e1f22] p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Your Bio</p>
-          <textarea
-            value={bio}
-            onChange={(e) => setBioState(e.target.value)}
-            placeholder="Tell others about yourself..."
-            rows={3}
-            className="w-full rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
-          />
-          <button
-            onClick={handleSaveBio}
-            disabled={!bio.trim() || isBusy}
-            className="mt-2 rounded bg-indigo-600 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            Save Bio
-          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
