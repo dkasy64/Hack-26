@@ -14,6 +14,7 @@ import {
   type DirectMessageInfo,
   type PendingInviteInfo,
 } from '../lib/matrixClient';
+import { EmojiPicker } from './EmojiPicker';
 
 interface Message {
   eventId: string;
@@ -43,10 +44,12 @@ export function HomeView({
   const [activeDmRoomId, setActiveDmRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadInvites = () => setPendingInvites(getPendingInvites());
@@ -176,9 +179,12 @@ export function HomeView({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Direct Messages</p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Friends</p>
+            <span className="text-[10px] uppercase tracking-wide text-[#6d6f78]">{directMessages.length} connected</span>
+          </div>
           {directMessages.length === 0 ? (
-            <p className="text-xs text-[#949ba4]">No direct messages yet.</p>
+            <p className="text-xs text-[#949ba4]">No friends yet. Add one to start a DM.</p>
           ) : (
             <div className="space-y-1">
               {directMessages.map((room) => (
@@ -250,8 +256,27 @@ export function HomeView({
             </div>
 
             <div className="px-4 pb-6 pt-2">
-              <div className="flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+              <div className="relative flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+                {showEmojiPicker && (
+                  <div className="absolute left-4 bottom-full z-10">
+                    <EmojiPicker
+                      onSelect={(emoji) => {
+                        setDraft((value) => value + emoji);
+                        setShowEmojiPicker(false);
+                        inputRef.current?.focus();
+                      }}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker((value) => !value)}
+                  className="rounded bg-[#2d2f35] px-3 py-2 text-sm text-[#c7c9cc] hover:bg-[#3b3e45]"
+                >
+                  😊
+                </button>
                 <input
+                  ref={inputRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
