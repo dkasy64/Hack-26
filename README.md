@@ -52,7 +52,7 @@ Vite starts on `http://localhost:5173` and Electron launches automatically.
 
 ## 4. Login
 
-Enter your Matrix homeserver URL (for local Synapse use `http://localhost:8008`), then log in or choose **Create Account** on the login screen.
+Choose your homeserver from the dropdown: **Default (10.111.110.222:8008)** or **Custom homeserver**. If you choose custom, enter a full URL (for example `http://localhost:8008`), then log in or choose **Create Account**.
 
 ## Tech Stack
 

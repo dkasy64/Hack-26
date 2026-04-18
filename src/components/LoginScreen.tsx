@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 
 const HOMESERVER_STORAGE_KEY = 'hackqu.lastHomeserver';
+const DEFAULT_HOMESERVER = 'http://10.111.110.222:8008';
+
+type HomeserverMode = 'default' | 'custom';
 
 interface Props {
   onLogin: (username: string, password: string, homeserver: string) => void | Promise<void>;
@@ -10,14 +13,21 @@ interface Props {
 }
 
 export function LoginScreen({ onLogin, onRegister, isLoading, error }: Props) {
-  const [homeserver, setHomeserver] = useState(() => {
+  const [customHomeserver, setCustomHomeserver] = useState(() => {
     const saved = window.localStorage.getItem(HOMESERVER_STORAGE_KEY);
-    return saved && saved.trim().length > 0 ? saved : 'http://localhost:8008';
+    return saved && saved.trim().length > 0 ? saved : DEFAULT_HOMESERVER;
+  });
+  const [homeserverMode, setHomeserverMode] = useState<HomeserverMode>(() => {
+    const saved = window.localStorage.getItem(HOMESERVER_STORAGE_KEY);
+    if (!saved || saved.trim().length === 0) return 'default';
+    return saved.trim() === DEFAULT_HOMESERVER ? 'default' : 'custom';
   });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegisterMode, setIsRegisterMode] = useState(false);
+
+  const homeserver = homeserverMode === 'default' ? DEFAULT_HOMESERVER : customHomeserver;
 
   useEffect(() => {
     window.localStorage.setItem(HOMESERVER_STORAGE_KEY, homeserver);
@@ -64,15 +74,35 @@ export function LoginScreen({ onLogin, onRegister, isLoading, error }: Props) {
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#b5bac1]">
               Homeserver
             </label>
-            <input
-              type="text"
-              value={homeserver}
-              onChange={(e) => setHomeserver(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            <select
+              value={homeserverMode}
+              onChange={(e) => setHomeserverMode(e.target.value as HomeserverMode)}
               className="w-full rounded bg-[#1e1f22] px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="https://matrix.org"
-            />
+            >
+              <option value="default">Default (10.111.110.222:8008)</option>
+              <option value="custom">Custom homeserver</option>
+            </select>
           </div>
+
+          {homeserverMode === 'custom' && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#b5bac1]">
+                Custom Homeserver URL
+              </label>
+              <input
+                type="text"
+                value={customHomeserver}
+                onChange={(e) => setCustomHomeserver(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                className="w-full rounded bg-[#1e1f22] px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="https://matrix.org"
+              />
+            </div>
+          )}
+
+          {homeserverMode === 'default' && (
+            <p className="text-xs text-[#b5bac1]">Using {DEFAULT_HOMESERVER}</p>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#b5bac1]">
