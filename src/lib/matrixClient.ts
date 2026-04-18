@@ -12,6 +12,36 @@ import * as sdk from 'matrix-js-sdk';
 
 const HOMESERVER = 'http://localhost:8008';
 
+function normalizeHomeserver(input: string): string {
+  const raw = input.trim() || HOMESERVER;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withProtocol.replace(/\/+$/, '');
+}
+
+function normalizeUsername(input: string): string {
+  let username = input.trim();
+  if (username.startsWith('@')) username = username.slice(1);
+
+  const colonIndex = username.indexOf(':');
+  if (colonIndex >= 0) {
+    username = username.slice(0, colonIndex);
+  }
+
+  return username;
+}
+
+function normalizeRegisterLocalpart(input: string): string {
+  const username = input.trim();
+  if (username.startsWith('@')) {
+    const noAt = username.slice(1);
+    const colonIndex = noAt.indexOf(':');
+    return colonIndex >= 0 ? noAt.slice(0, colonIndex) : noAt;
+  }
+
+  const colonIndex = username.indexOf(':');
+  return colonIndex >= 0 ? username.slice(0, colonIndex) : username;
+}
+
 // Singleton — call initClient() once at app startup
 let client: sdk.MatrixClient | null = null;
 
@@ -24,16 +54,20 @@ export function getClient(): sdk.MatrixClient {
 
 export async function loginWithPassword(
   username: string,
-  password: string
+  password: string,
+  homeserver = HOMESERVER
 ): Promise<sdk.MatrixClient> {
-  // Temporary client just for login — no storage needed yet
-  const tempClient = sdk.createClient({ baseUrl: HOMESERVER });
+  const normalizedHomeserver = normalizeHomeserver(homeserver);
+  const normalizedUsername = normalizeUsername(username).trim();
 
-  const response = await tempClient.loginWithPassword(username, password);
+  // Temporary client just for login — no storage needed yet
+  const tempClient = sdk.createClient({ baseUrl: normalizedHomeserver });
+
+  const response = await tempClient.loginWithPassword(normalizedUsername, password);
 
   // Re-create with full credentials + in-memory store
   client = sdk.createClient({
-    baseUrl: HOMESERVER,
+    baseUrl: normalizedHomeserver,
     accessToken: response.access_token,
     userId: response.user_id,
     store: new sdk.MemoryStore({ localStorage: window.localStorage }),
@@ -46,14 +80,34 @@ export async function loginWithPassword(
 
 export async function registerWithPassword(
   username: string,
-  password: string
+  password: string,
+  homeserver = HOMESERVER
 ): Promise<sdk.MatrixClient> {
-  const tempClient = sdk.createClient({ baseUrl: HOMESERVER });
+  const normalizedHomeserver = normalizeHomeserver(homeserver);
+  const localpart = normalizeRegisterLocalpart(username).trim();
 
-  await tempClient.register(username, password, null, { kind: 'guest' });
+  const response = await fetch(`${normalizedHomeserver}/_matrix/client/v3/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username: localpart,
+      password,
+      inhibit_login: true,
+      auth: {
+        type: 'm.login.dummy',
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? 'Registration failed');
+  }
 
   // After register, login to get a real access token
-  return loginWithPassword(username, password);
+  return loginWithPassword(username, password, normalizedHomeserver);
 }
 
 // ─── Spaces / Rooms ──────────────────────────────────────────────────────────
@@ -107,7 +161,7 @@ export async function createChannel(
   // Link channel as child of the Space
   await c.sendStateEvent(
     spaceRoomId,
-    'm.space.child',
+    'm.space.child' as any,
     { via: [c.getDomain()!] },
     result.room_id
   );
@@ -131,7 +185,8 @@ export function onRoomMessage(
 ): () => void {
   const c = getClient();
 
-  const listener = (event: sdk.MatrixEvent, room: sdk.Room) => {
+  const listener = (event: sdk.MatrixEvent, room?: sdk.Room) => {
+    if (!room) return;
     if (room.roomId !== roomId) return;
     if (event.getType() !== 'm.room.message') return;
     handler(event, room);

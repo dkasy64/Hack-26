@@ -12,7 +12,7 @@ import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelList } from './components/ChannelList';
 import { ChatWindow } from './components/ChatWindow';
 import { LoginScreen } from './components/LoginScreen';
-import { loginWithPassword, getClient } from './lib/matrixClient';
+import { loginWithPassword, registerWithPassword, getClient } from './lib/matrixClient';
 import type { MatrixClient, Room } from 'matrix-js-sdk';
 
 export interface Space {
@@ -37,14 +37,27 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   // ── Login ──────────────────────────────────────────────────────────────────
-  async function handleLogin(username: string, password: string) {
+  async function handleLogin(username: string, password: string, homeserver: string) {
     setIsLoading(true);
     setError(null);
     try {
-      const c = await loginWithPassword(username, password);
+      const c = await loginWithPassword(username, password, homeserver);
       setMatrixClient(c);
     } catch (e: any) {
       setError(e?.message ?? 'Login failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleRegister(username: string, password: string, homeserver: string) {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const c = await registerWithPassword(username, password, homeserver);
+      setMatrixClient(c);
+    } catch (e: any) {
+      setError(e?.message ?? 'Registration failed');
     } finally {
       setIsLoading(false);
     }
@@ -95,6 +108,7 @@ export default function App() {
     return (
       <LoginScreen
         onLogin={handleLogin}
+        onRegister={handleRegister}
         isLoading={isLoading}
         error={error}
       />

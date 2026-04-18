@@ -29,6 +29,10 @@ curl http://localhost:8008/_matrix/client/versions
 
 ## 2. Register Users
 
+Synapse is configured to allow signups by default, so users can be created directly from the app login screen.
+
+Optional: pre-create users from Docker if you want known demo accounts.
+
 ```bash
 docker exec -it hackqu-synapse register_new_matrix_user \
   -u alice -p password123 -a -c /data/homeserver.yaml http://localhost:8008
@@ -48,7 +52,7 @@ Vite starts on `http://localhost:5173` and Electron launches automatically.
 
 ## 4. Login
 
-Use `alice` / `password123` (or any registered user).
+Enter your Matrix homeserver URL (for local Synapse use `http://localhost:8008`), then log in or choose **Create Account** on the login screen.
 
 ## Tech Stack
 
