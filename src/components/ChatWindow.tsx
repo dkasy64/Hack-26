@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
-import { sendMessage, onRoomMessage, getRoomHistory } from '../lib/matrixClient';
+import { sendMessage, onRoomMessage, getRoomHistory, getClient } from '../lib/matrixClient';
 
 interface Message {
   eventId: string;
@@ -14,49 +14,167 @@ interface Props {
   matrixClient: MatrixClient;
 }
 
-function JitsiFrame({ roomId, onClose }: { roomId: string; onClose: () => void }) {
-  const jitsiRoom = `hackqu-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}`;
+// ─── WebRTC Video Call ────────────────────────────────────────────────────────
+
+function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void }) {
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const [status, setStatus] = useState<'waiting' | 'connecting' | 'connected'>('waiting');
 
   useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      try {
-        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (
-          data?.action === 'video-hangup' ||
-          data?.event === 'readyToClose' ||
-          data?.type === 'hang-up'
-        ) {
-          onClose();
+    const client = getClient();
+    let localStream: MediaStream | null = null;
+
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+    pcRef.current = pc;
+
+    // Remote stream → video element
+    pc.ontrack = (e) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = e.streams[0];
+        setStatus('connected');
+      }
+    };
+
+    // ICE candidate → Matrix
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        client.sendEvent(roomId, 'm.call.candidates' as any, {
+          call_id: roomId,
+          candidates: [e.candidate.toJSON()],
+          version: 1,
+        });
+      }
+    };
+
+    // Listen for signaling events from Matrix
+    const handleEvent = async (event: MatrixEvent) => {
+      if (event.getRoomId() !== roomId) return;
+      const type = event.getType();
+      const content = event.getContent();
+      const myId = client.getUserId();
+      if (event.getSender() === myId) return; // kendi event'lerini ignore et
+
+      if (type === 'm.call.invite') {
+        setStatus('connecting');
+        await pc.setRemoteDescription(new RTCSessionDescription(content.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        client.sendEvent(roomId, 'm.call.answer' as any, {
+          call_id: roomId,
+          answer: { type: answer.type, sdp: answer.sdp },
+          version: 1,
+        });
+      }
+
+      if (type === 'm.call.answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(content.answer));
+      }
+
+      if (type === 'm.call.candidates') {
+        for (const candidate of content.candidates ?? []) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
         }
-      } catch {}
+      }
+
+      if (type === 'm.call.hangup') {
+        onClose();
+      }
+    };
+
+    client.on('Room.timeline' as any, handleEvent);
+
+    // Kamera/mikrofon aç ve offer gönder
+    async function start() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+        }
+        localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        setStatus('connecting');
+
+        client.sendEvent(roomId, 'm.call.invite' as any, {
+          call_id: roomId,
+          offer: { type: offer.type, sdp: offer.sdp },
+          lifetime: 60000,
+          version: 1,
+        });
+      } catch (err) {
+        console.error('Media error:', err);
+      }
     }
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [onClose]);
+
+    start();
+
+    return () => {
+      client.off('Room.timeline' as any, handleEvent);
+      localStream?.getTracks().forEach((t) => t.stop());
+      pc.close();
+    };
+  }, [roomId, onClose]);
+
+  function handleLeave() {
+    const client = getClient();
+    client.sendEvent(roomId, 'm.call.hangup' as any, {
+      call_id: roomId,
+      version: 1,
+    });
+    onClose();
+  }
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-black">
       <div className="flex h-10 items-center justify-between bg-[#1e1f22] px-4">
-        <span className="text-sm font-semibold text-white">Voice / Video</span>
-        <button onClick={onClose} className="text-[#949ba4] hover:text-white text-xs">
+        <span className="text-sm font-semibold text-white">
+          Voice / Video —{' '}
+          {status === 'waiting' && 'Waiting for others...'}
+          {status === 'connecting' && 'Connecting...'}
+          {status === 'connected' && 'Connected'}
+        </span>
+        <button onClick={handleLeave} className="text-red-400 hover:text-red-300 text-xs font-semibold">
           Leave Call
         </button>
       </div>
-      <iframe
-        src={`https://meet.jit.si/${jitsiRoom}#config.prejoinPageEnabled=false&config.disableDeepLinking=true`}
-        className="flex-1 w-full border-0"
-        allow="camera; microphone; fullscreen; display-capture; autoplay"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-        title="Jitsi Meet"
-      />
+
+      <div className="relative flex-1 bg-[#1e1f22]">
+        {/* Remote video — büyük */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className="h-full w-full object-cover"
+        />
+        {/* Local video — küçük köşe */}
+        <video
+          ref={localVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]"
+        />
+        {status === 'waiting' && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <p className="text-[#b5bac1] text-sm">Waiting for someone to join...</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
+// ─── Chat Window ──────────────────────────────────────────────────────────────
+
 export function ChatWindow({ channelId, matrixClient }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
-  const [jitsiOpen, setJitsiOpen] = useState(false);
+  const [callOpen, setCallOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -102,7 +220,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           <span className="font-semibold text-white">channel</span>
         </div>
         <button
-          onClick={() => setJitsiOpen(true)}
+          onClick={() => setCallOpen(true)}
           className="flex items-center gap-1.5 rounded bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500"
         >
           <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -140,8 +258,8 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         </div>
       </div>
 
-      {jitsiOpen && channelId && (
-        <JitsiFrame roomId={channelId} onClose={() => setJitsiOpen(false)} />
+      {callOpen && channelId && (
+        <VideoCall roomId={channelId} onClose={() => setCallOpen(false)} />
       )}
     </main>
   );
@@ -162,7 +280,7 @@ function MessageRow({ message, myUserId }: { message: Message; myUserId: string 
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className={`group flex items-start gap-3 ${isMe ? '' : ''}`}>
+    <div className="group flex items-start gap-3">
       <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
         {displayName.slice(0, 2).toUpperCase()}
       </div>
