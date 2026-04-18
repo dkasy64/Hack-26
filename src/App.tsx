@@ -4,8 +4,16 @@ import { ChannelList } from './components/ChannelList';
 import { ChatWindow } from './components/ChatWindow';
 import { MemberList } from './components/MemberList';
 import { HomeView } from './components/HomeView';
+import { ProfileEditorModal } from './components/ProfileEditorModal';
 import { LoginScreen } from './components/LoginScreen';
-import { loginWithPassword, registerWithPassword, getClient } from './lib/matrixClient';
+import {
+  loginWithPassword,
+  registerWithPassword,
+  getClient,
+  getCurrentUserProfile,
+  onCurrentUserProfileChanged,
+  type CurrentUserProfile,
+} from './lib/matrixClient';
 import type { MatrixClient, Room } from 'matrix-js-sdk';
 
 export interface Space {
@@ -29,6 +37,8 @@ export default function App() {
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState<CurrentUserProfile | null>(null);
 
   async function handleLogin(username: string, password: string, homeserver: string) {
     setIsLoading(true);
@@ -99,6 +109,18 @@ export default function App() {
     return () => { matrixClient.off('sync' as any, syncRooms); };
   }, [matrixClient]);
 
+  useEffect(() => {
+    if (!matrixClient) return;
+
+    try {
+      setCurrentUserProfile(getCurrentUserProfile());
+    } catch {
+      // Ignore initial profile read failures until sync settles.
+    }
+
+    return onCurrentUserProfileChanged(setCurrentUserProfile);
+  }, [matrixClient]);
+
   if (!matrixClient) {
     return (
       <LoginScreen
@@ -113,6 +135,13 @@ export default function App() {
   const activeChannels = channels.filter((c) => c.spaceId === activeSpaceId);
   const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
   const activeSpace = spaces.find((s) => s.id === activeSpaceId) ?? null;
+  const fallbackUserId = matrixClient.getUserId() ?? '@you:unknown';
+  const profile = currentUserProfile ?? {
+    userId: fallbackUserId,
+    displayName: fallbackUserId.replace(/^@/, '').split(':')[0] || 'You',
+    avatarMxcUrl: null,
+    avatarUrl: null,
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#313338] text-white select-none">
@@ -133,13 +162,23 @@ export default function App() {
       />
 
       {isHomeActive ? (
-        <HomeView matrixClient={matrixClient} />
+        <HomeView
+          matrixClient={matrixClient}
+          currentUserDisplayName={profile.displayName}
+          currentUserAvatarUrl={profile.avatarUrl}
+          currentUserTag={profile.userId}
+          onOpenProfile={() => setIsProfileEditorOpen(true)}
+        />
       ) : (
         <>
           <ChannelList
             channels={activeChannels}
             activeChannelId={activeChannelId}
             spaceName={spaces.find((s) => s.id === activeSpaceId)?.name ?? ''}
+            currentUserDisplayName={profile.displayName}
+            currentUserAvatarUrl={profile.avatarUrl}
+            currentUserTag={profile.userId}
+            onOpenProfile={() => setIsProfileEditorOpen(true)}
             onSelectChannel={setActiveChannelId}
             activeSpaceId={activeSpaceId}
             onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
@@ -159,6 +198,13 @@ export default function App() {
           />
         </>
       )}
+
+      <ProfileEditorModal
+        isOpen={isProfileEditorOpen}
+        profile={profile}
+        onClose={() => setIsProfileEditorOpen(false)}
+        onSaved={setCurrentUserProfile}
+      />
     </div>
   );
 }

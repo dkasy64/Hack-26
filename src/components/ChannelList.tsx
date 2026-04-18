@@ -15,6 +15,10 @@ interface Props {
   channels: Channel[];
   activeChannelId: string | null;
   spaceName: string;
+  currentUserDisplayName: string;
+  currentUserAvatarUrl: string | null;
+  currentUserTag: string;
+  onOpenProfile: () => void;
   onSelectChannel: (id: string) => void;
   activeSpaceId: string | null;
   onSpaceCreated: (space: Space) => void;
@@ -25,6 +29,10 @@ export function ChannelList({
   channels,
   activeChannelId,
   spaceName,
+  currentUserDisplayName,
+  currentUserAvatarUrl,
+  currentUserTag,
+  onOpenProfile,
   onSelectChannel,
   activeSpaceId,
   onSpaceCreated,
@@ -271,15 +279,22 @@ export function ChannelList({
         ))}
       </div>
 
-      <div className="flex h-14 items-center gap-2 bg-[#232428] px-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-          U
+      <button
+        onClick={onOpenProfile}
+        className="flex h-14 w-full items-center gap-2 bg-[#232428] px-2 transition hover:bg-[#2f3136]"
+      >
+        {currentUserAvatarUrl ? (
+          <img src={currentUserAvatarUrl} alt="Your avatar" className="h-8 w-8 rounded-full object-cover" />
+        ) : (
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+            {currentUserDisplayName.slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        <div className="flex min-w-0 flex-col items-start leading-tight">
+          <span className="max-w-full truncate text-sm font-medium text-white">{currentUserDisplayName}</span>
+          <span className="max-w-full truncate text-xs text-[#949ba4]">{currentUserTag}</span>
         </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-medium text-white">You</span>
-          <span className="text-xs text-[#949ba4]">#0001</span>
-        </div>
-      </div>
+      </button>
     </aside>
   );
 }

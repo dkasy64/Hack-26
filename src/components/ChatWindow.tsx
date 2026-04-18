@@ -15,12 +15,11 @@ interface Props {
   matrixClient: MatrixClient;
 }
 
-// ─── WebRTC Video Call ────────────────────────────────────────────────────────
-
-function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void }) {
+function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: () => void; isInitiator: boolean }) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
   const [status, setStatus] = useState<'waiting' | 'connecting' | 'connected'>('waiting');
 
   useEffect(() => {
@@ -28,19 +27,21 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
     let localStream: MediaStream | null = null;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
     });
     pcRef.current = pc;
 
-    // Remote stream → video element
     pc.ontrack = (e) => {
-      if (remoteVideoRef.current) {
+      console.log('Remote track received:', e.streams);
+      if (remoteVideoRef.current && e.streams[0]) {
         remoteVideoRef.current.srcObject = e.streams[0];
         setStatus('connected');
       }
     };
 
-    // ICE candidate → Matrix
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         client.sendEvent(roomId, 'm.call.candidates' as any, {
@@ -51,17 +52,30 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
       }
     };
 
-    // Listen for signaling events from Matrix
+    pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState);
+      if (pc.connectionState === 'connected') setStatus('connected');
+      if (pc.connectionState === 'failed') setStatus('connecting');
+    };
+
+    async function applyPendingCandidates() {
+      for (const c of pendingCandidates.current) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+      }
+      pendingCandidates.current = [];
+    }
+
     const handleEvent = async (event: MatrixEvent) => {
       if (event.getRoomId() !== roomId) return;
       const type = event.getType();
       const content = event.getContent();
       const myId = client.getUserId();
-      if (event.getSender() === myId) return; // kendi event'lerini ignore et
+      if (event.getSender() === myId) return;
 
-      if (type === 'm.call.invite') {
+      if (type === 'm.call.invite' && !isInitiator) {
         setStatus('connecting');
         await pc.setRemoteDescription(new RTCSessionDescription(content.offer));
+        await applyPendingCandidates();
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         client.sendEvent(roomId, 'm.call.answer' as any, {
@@ -71,42 +85,44 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
         });
       }
 
-      if (type === 'm.call.answer') {
+      if (type === 'm.call.answer' && isInitiator) {
         await pc.setRemoteDescription(new RTCSessionDescription(content.answer));
+        await applyPendingCandidates();
+        setStatus('connecting');
       }
 
       if (type === 'm.call.candidates') {
-        for (const candidate of content.candidates ?? []) {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        for (const c of content.candidates ?? []) {
+          if (pc.remoteDescription) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+          } else {
+            pendingCandidates.current.push(c);
+          }
         }
       }
 
-      if (type === 'm.call.hangup') {
-        onClose();
-      }
+      if (type === 'm.call.hangup') onClose();
     };
 
     client.on('Room.timeline' as any, handleEvent);
 
-    // Kamera/mikrofon aç ve offer gönder
     async function start() {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = localStream;
-        }
+        if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
         localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
 
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        setStatus('connecting');
-
-        client.sendEvent(roomId, 'm.call.invite' as any, {
-          call_id: roomId,
-          offer: { type: offer.type, sdp: offer.sdp },
-          lifetime: 60000,
-          version: 1,
-        });
+        if (isInitiator) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          setStatus('connecting');
+          client.sendEvent(roomId, 'm.call.invite' as any, {
+            call_id: roomId,
+            offer: { type: offer.type, sdp: offer.sdp },
+            lifetime: 60000,
+            version: 1,
+          });
+        }
       } catch (err) {
         console.error('Media error:', err);
       }
@@ -119,14 +135,10 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
       localStream?.getTracks().forEach((t) => t.stop());
       pc.close();
     };
-  }, [roomId, onClose]);
+  }, [roomId, onClose, isInitiator]);
 
   function handleLeave() {
-    const client = getClient();
-    client.sendEvent(roomId, 'm.call.hangup' as any, {
-      call_id: roomId,
-      version: 1,
-    });
+    getClient().sendEvent(roomId, 'm.call.hangup' as any, { call_id: roomId, version: 1 });
     onClose();
   }
 
@@ -137,22 +149,19 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
           Voice / Video —{' '}
           {status === 'waiting' && 'Waiting for others...'}
           {status === 'connecting' && 'Connecting...'}
-          {status === 'connected' && 'Connected'}
+          {status === 'connected' && 'Connected ✓'}
         </span>
         <button onClick={handleLeave} className="text-red-400 hover:text-red-300 text-xs font-semibold">
           Leave Call
         </button>
       </div>
-
       <div className="relative flex-1 bg-[#1e1f22]">
-        {/* Remote video — büyük */}
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
           className="h-full w-full object-cover"
         />
-        {/* Local video — küçük köşe */}
         <video
           ref={localVideoRef}
           autoPlay
@@ -160,9 +169,13 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
           muted
           className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]"
         />
-        {status === 'waiting' && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-[#b5bac1] text-sm">Waiting for someone to join...</p>
+        {status !== 'connected' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="text-4xl">📹</div>
+            <p className="text-[#b5bac1] text-sm font-semibold">
+              {status === 'waiting' ? 'Waiting for others to join...' : 'Connecting...'}
+            </p>
+            <p className="text-[#6d6f78] text-xs">Share this channel with your team</p>
           </div>
         )}
       </div>
@@ -170,15 +183,62 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
   );
 }
 
-// ─── Chat Window ──────────────────────────────────────────────────────────────
+function IncomingCallBanner({ caller, onAccept, onReject }: {
+  caller: string;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const displayName = caller.split(':')[0].replace('@', '');
+  return (
+    <div className="absolute top-14 left-0 right-0 z-20 mx-4 flex items-center justify-between rounded-lg bg-[#248046] px-4 py-3 shadow-lg">
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
+          {displayName.slice(0, 2).toUpperCase()}
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-white">{displayName} is calling...</p>
+          <p className="text-xs text-white/70">Incoming video call</p>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={onAccept} className="rounded bg-white/20 px-3 py-1 text-xs font-semibold text-white hover:bg-white/30">
+          Accept
+        </button>
+        <button onClick={onReject} className="rounded bg-red-500/80 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500">
+          Decline
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function ChatWindow({ channelId, matrixClient }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
+  const [isInitiator, setIsInitiator] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<{ caller: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const callOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (!channelId) return undefined;
+    const client = getClient();
+    const myId = client.getUserId();
+
+    const handleIncoming = (event: MatrixEvent) => {
+      if (event.getRoomId() !== channelId) return;
+      if (event.getType() !== 'm.call.invite') return;
+      if (event.getSender() === myId) return;
+      if (callOpenRef.current) return;
+      setIncomingCall({ caller: event.getSender() ?? 'Unknown' });
+    };
+
+    client.on('Room.timeline' as any, handleIncoming);
+    return () => { client.off('Room.timeline' as any, handleIncoming); };
+  }, [channelId]);
 
   useEffect(() => {
     if (!channelId) return;
@@ -223,7 +283,10 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           <span className="font-semibold text-white">channel</span>
         </div>
         <button
-          onClick={() => setCallOpen(true)}
+          onClick={() => {
+            setIsInitiator(true);
+            setCallOpen(true);
+          }}
           className="flex items-center gap-1.5 rounded bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-500"
         >
           <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -232,6 +295,23 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           Join Voice
         </button>
       </div>
+
+      {incomingCall && !callOpen && (
+        <IncomingCallBanner
+          caller={incomingCall.caller}
+          onAccept={() => {
+            setIncomingCall(null);
+            setIsInitiator(false);
+            setCallOpen(true);
+          }}
+          onReject={() => {
+            setIncomingCall(null);
+            if (channelId) {
+              getClient().sendEvent(channelId, 'm.call.hangup' as any, { call_id: channelId, version: 1 });
+            }
+          }}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((msg) => (
@@ -281,7 +361,14 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
       </div>
 
       {callOpen && channelId && (
-        <VideoCall roomId={channelId} onClose={() => setCallOpen(false)} />
+        <VideoCall
+          roomId={channelId}
+          onClose={() => {
+            setCallOpen(false);
+            setIsInitiator(false);
+          }}
+          isInitiator={isInitiator}
+        />
       )}
     </main>
   );

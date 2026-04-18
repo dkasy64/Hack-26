@@ -81,6 +81,12 @@ From Home you can:
 - Accept incoming invites
 - Open and send direct messages (DMs)
 
+## 8. Profile Customization
+
+In the space/channel view, click your profile card at the bottom of the channel sidebar.
+
+You can edit your display name and upload a new profile picture. Changes are saved to your Matrix profile.
+
 ## Tech Stack
 
 - **Frontend:** React + Vite + Tailwind CSS
