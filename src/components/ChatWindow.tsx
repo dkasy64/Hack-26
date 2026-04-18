@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
-import { sendMessage, sendImageMessage, sendVideoMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile, resolveMxcAvatarUrl } from '../lib/matrixClient';
+import { sendMessage, sendImageMessage, sendVideoMessage, deleteMessage, editMessage, sendTyping, onTypingChanged, onReadReceiptsChanged, onRoomMessage, getRoomHistory, getClient, getUserProfile, resolveMxcAvatarUrl } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
 
@@ -11,6 +11,7 @@ interface Message {
   ts: number;
   imageUrl?: string;
   videoUrl?: string;
+  isEdited?: boolean;
 }
 
 interface Props {
@@ -232,8 +233,6 @@ function IncomingCallBanner({ caller, onAccept, onReject }: {
   );
 }
 
-// ─── Video Note Recorder ──────────────────────────────────────────────────────
-
 function VideoNoteRecorder({ channelId, onDone }: { channelId: string; onDone: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -249,9 +248,7 @@ function VideoNoteRecorder({ channelId, onDone }: { channelId: string; onDone: (
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
+        if (videoRef.current) videoRef.current.srcObject = stream;
       } catch (err) {
         console.error('Camera error:', err);
       }
@@ -278,18 +275,12 @@ function VideoNoteRecorder({ channelId, onDone }: { channelId: string; onDone: (
   async function stopAndSend() {
     if (!mediaRecorderRef.current) return;
     if (timerRef.current) clearInterval(timerRef.current);
-
     mediaRecorderRef.current.stop();
     setRecording(false);
     setUploading(true);
-
-    await new Promise<void>((resolve) => {
-      mediaRecorderRef.current!.onstop = () => resolve();
-    });
-
+    await new Promise<void>((resolve) => { mediaRecorderRef.current!.onstop = () => resolve(); });
     const blob = new Blob(chunksRef.current, { type: 'video/webm' });
     const file = new File([blob], `video-note-${Date.now()}.webm`, { type: 'video/webm' });
-
     try {
       await sendVideoMessage(channelId, file);
     } catch (err) {
@@ -319,19 +310,12 @@ function VideoNoteRecorder({ channelId, onDone }: { channelId: string; onDone: (
       </div>
       <div className="flex justify-center gap-3 p-3">
         {!recording ? (
-          <button
-            onClick={startRecording}
-            disabled={uploading}
-            className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
-          >
+          <button onClick={startRecording} disabled={uploading} className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50">
             <div className="h-2.5 w-2.5 rounded-full bg-white" />
             Record
           </button>
         ) : (
-          <button
-            onClick={stopAndSend}
-            className="flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
-          >
+          <button onClick={stopAndSend} className="flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500">
             <div className="h-2.5 w-2.5 rounded bg-white" />
             Stop & Send
           </button>
@@ -351,10 +335,13 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
   const [incomingCall, setIncomingCall] = useState<{ caller: string } | null>(null);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [readReceipts, setReadReceipts] = useState<Record<string, string>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const callOpenRef = useRef(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!channelId) return undefined;
@@ -386,14 +373,46 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
     return unsub;
   }, [channelId]);
 
+  // Typing indicator
+  useEffect(() => {
+    if (!channelId) return;
+    const unsub = onTypingChanged(channelId, (userIds) => {
+      const names = userIds.map((uid) => {
+        const profile = getUserProfile(uid);
+        return profile.displayName || uid.split(':')[0].replace('@', '');
+      });
+      setTypingUsers(names);
+    });
+    return unsub;
+  }, [channelId]);
+
+  // Read receipts
+  useEffect(() => {
+    if (!channelId) return;
+    const unsub = onReadReceiptsChanged(channelId, setReadReceipts);
+    return unsub;
+  }, [channelId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   async function handleSend() {
     if (!draft.trim() || !channelId) return;
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    sendTyping(channelId, false);
     await sendMessage(channelId, draft.trim());
     setDraft('');
+  }
+
+  function handleDraftChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setDraft(e.target.value);
+    if (!channelId) return;
+    sendTyping(channelId, true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      sendTyping(channelId, false);
+    }, 3000);
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -425,6 +444,19 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
       </main>
     );
   }
+
+  const myUserId = matrixClient.getUserId() ?? '';
+
+  // Son mesajı kim okudu
+  const lastMessageId = messages[messages.length - 1]?.eventId;
+  const readByUsers = lastMessageId
+    ? Object.entries(readReceipts)
+        .filter(([uid, eventId]) => eventId === lastMessageId && uid !== myUserId)
+        .map(([uid]) => {
+          const p = getUserProfile(uid);
+          return p.displayName || uid.split(':')[0].replace('@', '');
+        })
+    : [];
 
   return (
     <main className="relative flex flex-1 flex-col bg-[#313338]">
@@ -468,10 +500,52 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((msg) => (
-          <MessageRow key={msg.eventId} message={msg} myUserId={matrixClient.getUserId() ?? ''} onClickUsername={setProfileModalUserId} />
+          <MessageRow
+            key={msg.eventId}
+            message={msg}
+            myUserId={myUserId}
+            channelId={channelId}
+            onClickUsername={setProfileModalUserId}
+            onDelete={async (eventId) => {
+              await deleteMessage(channelId, eventId);
+              setMessages((prev) => prev.filter((m) => m.eventId !== eventId));
+            }}
+            onEdit={async (eventId, newBody) => {
+              await editMessage(channelId, eventId, newBody);
+              setMessages((prev) => prev.map((m) => m.eventId === eventId ? { ...m, body: newBody, isEdited: true } : m));
+            }}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
+
+      {/* Read receipts */}
+      {readByUsers.length > 0 && (
+        <div className="px-4 pb-1 flex items-center gap-1">
+          <svg className="h-3 w-3 text-indigo-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+          <span className="text-[11px] text-[#6d6f78]">
+            {readByUsers.slice(0, 3).join(', ')} tarafından okundu
+          </span>
+        </div>
+      )}
+
+      {/* Typing indicator */}
+      {typingUsers.length > 0 && (
+        <div className="px-4 pb-1 flex items-center gap-1.5">
+          <div className="flex gap-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#949ba4] animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="h-1.5 w-1.5 rounded-full bg-[#949ba4] animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="h-1.5 w-1.5 rounded-full bg-[#949ba4] animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+          <span className="text-[11px] text-[#949ba4]">
+            {typingUsers.length === 1
+              ? `${typingUsers[0]} yazıyor...`
+              : `${typingUsers.slice(0, 2).join(', ')} yazıyor...`}
+          </span>
+        </div>
+      )}
 
       {showVideoRecorder && channelId && (
         <VideoNoteRecorder channelId={channelId} onDone={() => setShowVideoRecorder(false)} />
@@ -524,7 +598,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           <input
             ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={handleDraftChange}
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
             placeholder="Message #channel"
             className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[#6d6f78]"
@@ -567,29 +641,45 @@ function eventToMessage(event: MatrixEvent): Message {
   if (content.msgtype === 'm.image' && content.url) {
     try { imageUrl = resolveMxcAvatarUrl(content.url) ?? undefined; } catch {}
   }
-
   if (content.msgtype === 'm.video' && content.url) {
     try { videoUrl = resolveMxcAvatarUrl(content.url) ?? undefined; } catch {}
   }
 
+  const isEdited = !!(content['m.relates_to']?.rel_type === 'm.replace' || content['m.new_content']);
+
   return {
     eventId: event.getId() ?? Math.random().toString(),
     sender: event.getSender() ?? 'unknown',
-    body: content.body ?? '',
+    body: content['m.new_content']?.body ?? content.body ?? '',
     ts: event.getTs(),
     imageUrl,
     videoUrl,
+    isEdited,
   };
 }
 
-function MessageRow({ message, myUserId, onClickUsername }: { message: Message; myUserId: string; onClickUsername: (userId: string) => void }) {
+function MessageRow({ message, myUserId, channelId, onClickUsername, onDelete, onEdit }: {
+  message: Message;
+  myUserId: string;
+  channelId: string;
+  onClickUsername: (userId: string) => void;
+  onDelete: (eventId: string) => void;
+  onEdit: (eventId: string, newBody: string) => void;
+}) {
   const profile = getUserProfile(message.sender);
   const fallbackDisplayName = message.sender.split(':')[0].replace('@', '');
   const displayName = profile.displayName || fallbackDisplayName;
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const isMe = message.sender === myUserId;
+  const [showMenu, setShowMenu] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(message.body);
 
   return (
-    <div className="group flex items-start gap-3">
+    <div
+      className="group relative flex items-start gap-3"
+      onMouseLeave={() => setShowMenu(false)}
+    >
       {profile.avatarUrl ? (
         <img src={profile.avatarUrl} alt={`${displayName} avatar`} className="h-10 w-10 flex-shrink-0 rounded-full object-cover" />
       ) : (
@@ -597,34 +687,59 @@ function MessageRow({ message, myUserId, onClickUsername }: { message: Message; 
           {displayName.slice(0, 2).toUpperCase()}
         </div>
       )}
-      <div>
+      <div className="flex-1">
         <div className="flex items-baseline gap-2">
-          <button
-            onClick={() => onClickUsername(message.sender)}
-            className="text-sm font-semibold text-white hover:underline"
-          >
+          <button onClick={() => onClickUsername(message.sender)} className="text-sm font-semibold text-white hover:underline">
             {displayName}
           </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
+          {message.isEdited && <span className="text-[10px] text-[#6d6f78]">(edited)</span>}
         </div>
-        {message.videoUrl ? (
-          <video
-            src={message.videoUrl}
-            controls
-            className="mt-1 max-w-xs rounded-lg"
-            style={{ maxHeight: '240px' }}
-          />
+
+        {editing ? (
+          <div className="mt-1 flex gap-2">
+            <input
+              autoFocus
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onEdit(message.eventId, editDraft);
+                  setEditing(false);
+                }
+                if (e.key === 'Escape') setEditing(false);
+              }}
+              className="flex-1 rounded bg-[#1e1f22] px-2 py-1 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <button onClick={() => { onEdit(message.eventId, editDraft); setEditing(false); }} className="rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500">Save</button>
+            <button onClick={() => setEditing(false)} className="rounded bg-[#36393f] px-2 py-1 text-xs text-[#b5bac1]">Cancel</button>
+          </div>
+        ) : message.videoUrl ? (
+          <video src={message.videoUrl} controls className="mt-1 max-w-xs rounded-lg" style={{ maxHeight: '240px' }} />
         ) : message.imageUrl ? (
-          <img
-            src={message.imageUrl}
-            alt={message.body}
-            className="mt-1 max-w-xs rounded-lg object-cover cursor-pointer"
-            onClick={() => window.open(message.imageUrl, '_blank')}
-          />
+          <img src={message.imageUrl} alt={message.body} className="mt-1 max-w-xs rounded-lg object-cover cursor-pointer" onClick={() => window.open(message.imageUrl, '_blank')} />
         ) : (
           <p className="text-sm text-[#dcddde]">{message.body}</p>
         )}
       </div>
+
+      {/* Hover menu */}
+      {isMe && !editing && (
+        <div className="absolute right-0 top-0 hidden group-hover:flex items-center gap-1 rounded bg-[#2b2d31] border border-[#404249] px-1 py-0.5">
+          <button
+            onClick={() => { setEditDraft(message.body); setEditing(true); setShowMenu(false); }}
+            className="px-2 py-1 text-xs text-[#b5bac1] hover:text-white"
+          >
+            ✏️
+          </button>
+          <button
+            onClick={() => { if (confirm('Mesajı sil?')) onDelete(message.eventId); }}
+            className="px-2 py-1 text-xs text-[#b5bac1] hover:text-red-400"
+          >
+            🗑️
+          </button>
+        </div>
+      )}
     </div>
   );
 }
