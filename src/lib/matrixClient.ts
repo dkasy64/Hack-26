@@ -689,6 +689,73 @@ export async function sendMessage(roomId: string, body: string): Promise<void> {
   await getClient().sendTextMessage(roomId, body);
 }
 
+export async function deleteMessage(roomId: string, eventId: string): Promise<void> {
+  await getClient().redactEvent(roomId, eventId);
+}
+
+export async function editMessage(roomId: string, eventId: string, newBody: string): Promise<void> {
+  const c = getClient();
+  await c.sendMessage(roomId, {
+    msgtype: sdk.MsgType.Text,
+    body: `* ${newBody}`,
+    'm.new_content': {
+      msgtype: sdk.MsgType.Text,
+      body: newBody,
+    },
+    'm.relates_to': {
+      rel_type: 'm.replace',
+      event_id: eventId,
+    },
+  } as any);
+}
+
+export function sendTyping(roomId: string, isTyping: boolean): void {
+  getClient().sendTyping(roomId, isTyping, 3000).catch(() => {});
+}
+
+export function onTypingChanged(
+  roomId: string,
+  handler: (userIds: string[]) => void
+): () => void {
+  const c = getClient();
+  const myId = c.getUserId();
+
+  const listener = () => {
+    const room = c.getRoom(roomId);
+    if (!room) return;
+    const typingMembers = room.currentState
+      .getMembers()
+      .filter((m) => m.typing && m.userId !== myId)
+      .map((m) => m.userId);
+    handler(typingMembers);
+  };
+
+  c.on('RoomMember.typing' as any, listener);
+  return () => c.off('RoomMember.typing' as any, listener);
+}
+
+export function onReadReceiptsChanged(
+  roomId: string,
+  handler: (receipts: Record<string, string>) => void
+): () => void {
+  const c = getClient();
+
+  const emit = () => {
+    const room = c.getRoom(roomId);
+    if (!room) return;
+    const receipts: Record<string, string> = {};
+    const members = room.getMembers();
+    for (const member of members) {
+      const receipt = room.getEventReadUpTo(member.userId);
+      if (receipt) receipts[member.userId] = receipt;
+    }
+    handler(receipts);
+  };
+
+  c.on('Room.receipt' as any, emit);
+  return () => c.off('Room.receipt' as any, emit);
+}
+
 export async function sendImageMessage(roomId: string, file: File): Promise<void> {
   const c = getClient();
   const uploadResult = await c.uploadContent(file, { type: file.type });
