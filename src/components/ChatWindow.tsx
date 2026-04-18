@@ -20,6 +20,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
   const isInitiatorRef = useRef(isInitiator);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
   const [status, setStatus] = useState<'waiting' | 'connecting' | 'connected'>('waiting');
 
   useEffect(() => {
@@ -32,6 +33,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         { urls: 'stun:stun1.l.google.com:19302' },
       ],
     });
+    pcRef.current = pc;
 
     pc.ontrack = (e) => {
       if (remoteVideoRef.current && e.streams[0]) {
@@ -119,6 +121,28 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
             lifetime: 60000,
             version: 1,
           });
+        } else {
+          // Answerer — history'de bekleyen invite var mı kontrol et
+          const room = client.getRoom(roomId);
+          if (room) {
+            const events = [...room.getLiveTimeline().getEvents()].reverse();
+            const pendingInvite = events.find(
+              (e) => e.getType() === 'm.call.invite' && e.getSender() !== client.getUserId()
+            );
+            if (pendingInvite) {
+              const content = pendingInvite.getContent();
+              setStatus('connecting');
+              await pc.setRemoteDescription(new RTCSessionDescription(content.offer));
+              await applyPendingCandidates();
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              client.sendEvent(roomId, 'm.call.answer' as any, {
+                call_id: roomId,
+                answer: { type: answer.type, sdp: answer.sdp },
+                version: 1,
+              });
+            }
+          }
         }
       } catch (err) {
         console.error('Media error:', err);
