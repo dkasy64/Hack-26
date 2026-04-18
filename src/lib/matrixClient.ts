@@ -102,6 +102,24 @@ export function resolveMxcAvatarUrl(mxcUrl: string | null | undefined): string |
 
   const c = getClient();
 
+  if (!mxcUrl.startsWith('mxc://')) return mxcUrl;
+
+  const withoutScheme = mxcUrl.slice('mxc://'.length);
+  const separator = withoutScheme.indexOf('/');
+  if (separator < 0) return null;
+
+  const server = encodeURIComponent(withoutScheme.slice(0, separator));
+  const mediaId = encodeURIComponent(withoutScheme.slice(separator + 1));
+  const baseUrl = c.getHomeserverUrl().replace(/\/+$/, '');
+  const accessToken = c.getAccessToken();
+  const tokenQuery = accessToken
+    ? `?access_token=${encodeURIComponent(accessToken)}&allow_redirect=true`
+    : '?allow_redirect=true';
+
+  // Prefer the authenticated client media endpoint for Electron image tags.
+  const clientMediaUrl = `${baseUrl}/_matrix/client/v1/media/download/${server}/${mediaId}${tokenQuery}`;
+  if (clientMediaUrl) return clientMediaUrl;
+
   const directUrl = c.mxcUrlToHttp(
     mxcUrl,
     undefined,
@@ -113,19 +131,7 @@ export function resolveMxcAvatarUrl(mxcUrl: string | null | undefined): string |
 
   if (directUrl) return directUrl;
 
-  if (!mxcUrl.startsWith('mxc://')) return mxcUrl;
-
-  const withoutScheme = mxcUrl.slice('mxc://'.length);
-  const separator = withoutScheme.indexOf('/');
-  if (separator < 0) return null;
-
-  const server = encodeURIComponent(withoutScheme.slice(0, separator));
-  const mediaId = encodeURIComponent(withoutScheme.slice(separator + 1));
-  const baseUrl = c.getHomeserverUrl().replace(/\/+$/, '');
-  const accessToken = c.getAccessToken();
-  const query = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : '';
-
-  return `${baseUrl}/_matrix/media/v3/download/${server}/${mediaId}${query}`;
+  return `${baseUrl}/_matrix/media/v3/download/${server}/${mediaId}`;
 }
 
 function localpartFromUserId(userId: string): string {

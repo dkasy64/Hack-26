@@ -29,3 +29,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 synapse-data/homeserver.db-wal
+synapse-data/homeserver.db
+synapse-data/homeserver.db-shm
+synapse-data/homeserver.db-wal
