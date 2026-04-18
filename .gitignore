@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+electron-dist/
+
+# Synapse data (contains secrets + DB)
+synapse-data/
+
+# Vite
+.vite/
+
+# TypeScript
+*.tsbuildinfo
+
+# Electron builder
+release/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
