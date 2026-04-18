@@ -1,8 +1,3 @@
-/**
- * TEAMMATE A — Main chat area + optional Jitsi IFrame overlay
- * TEAMMATE B — sendMessage(), onRoomMessage(), getRoomHistory() are wired here
- */
-
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { sendMessage, onRoomMessage, getRoomHistory } from '../lib/matrixClient';
@@ -19,11 +14,25 @@ interface Props {
   matrixClient: MatrixClient;
 }
 
-// ─── Jitsi IFrame ─────────────────────────────────────────────────────────────
-
 function JitsiFrame({ roomId, onClose }: { roomId: string; onClose: () => void }) {
-  // Use a stable room slug derived from the Matrix roomId
   const jitsiRoom = `hackqu-${roomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}`;
+
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      try {
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (
+          data?.action === 'video-hangup' ||
+          data?.event === 'readyToClose' ||
+          data?.type === 'hang-up'
+        ) {
+          onClose();
+        }
+      } catch {}
+    }
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [onClose]);
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-black">
@@ -34,16 +43,15 @@ function JitsiFrame({ roomId, onClose }: { roomId: string; onClose: () => void }
         </button>
       </div>
       <iframe
-        src={`https://meet.jit.si/${jitsiRoom}`}
+        src={`https://meet.jit.si/${jitsiRoom}#config.prejoinPageEnabled=false&config.disableDeepLinking=true`}
         className="flex-1 w-full border-0"
         allow="camera; microphone; fullscreen; display-capture; autoplay"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
         title="Jitsi Meet"
       />
     </div>
   );
 }
-
-// ─── Chat Window ──────────────────────────────────────────────────────────────
 
 export function ChatWindow({ channelId, matrixClient }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -51,25 +59,19 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
   const [jitsiOpen, setJitsiOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load history + subscribe to live messages
   useEffect(() => {
     if (!channelId) return;
-
     const history = getRoomHistory(channelId).map(eventToMessage);
     setMessages(history);
-
     const unsub = onRoomMessage(channelId, (event: MatrixEvent, _room: Room) => {
       setMessages((prev) => {
-        // Deduplicate by eventId
         if (prev.some((m) => m.eventId === event.getId())) return prev;
         return [...prev, eventToMessage(event)];
       });
     });
-
     return unsub;
   }, [channelId]);
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -94,7 +96,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
 
   return (
     <main className="relative flex flex-1 flex-col bg-[#313338]">
-      {/* Header */}
       <div className="flex h-12 items-center justify-between border-b border-[#1e1f22] px-4 shadow-sm">
         <div className="flex items-center gap-2">
           <span className="text-[#b5bac1]">#</span>
@@ -111,7 +112,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         </button>
       </div>
 
-      {/* Message list */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((msg) => (
           <MessageRow key={msg.eventId} message={msg} myUserId={matrixClient.getUserId() ?? ''} />
@@ -119,7 +119,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input bar */}
       <div className="px-4 pb-6 pt-2">
         <div className="flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
           <input
@@ -141,15 +140,12 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         </div>
       </div>
 
-      {/* Jitsi overlay */}
       {jitsiOpen && channelId && (
         <JitsiFrame roomId={channelId} onClose={() => setJitsiOpen(false)} />
       )}
     </main>
   );
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function eventToMessage(event: MatrixEvent): Message {
   return {
