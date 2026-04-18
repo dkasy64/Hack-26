@@ -3,9 +3,11 @@ import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import {
   acceptInvite,
   createOrGetDirectMessage,
+  createGroupDirectMessage,
   getDirectMessageRooms,
   getPendingInvites,
   getRoomHistory,
+  leaveRoom,
   onDirectMessagesChanged,
   onPendingInvitesChanged,
   onRoomMessage,
@@ -39,6 +41,8 @@ export function HomeView({
   onOpenProfile,
 }: Props) {
   const [friendInput, setFriendInput] = useState('');
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [groupUsersInput, setGroupUsersInput] = useState('');
   const [pendingInvites, setPendingInvites] = useState<PendingInviteInfo[]>([]);
   const [directMessages, setDirectMessages] = useState<DirectMessageInfo[]>([]);
   const [activeDmRoomId, setActiveDmRoomId] = useState<string | null>(null);
@@ -128,6 +132,52 @@ export function HomeView({
     setDraft('');
   }
 
+  async function handleCreateGroupDm() {
+    const parsedUsers = groupUsersInput
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (parsedUsers.length < 2) {
+      setError('Enter at least two users for a group DM');
+      return;
+    }
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      const roomId = await createGroupDirectMessage(parsedUsers, groupNameInput.trim() || undefined);
+      setActiveDmRoomId(roomId);
+      setGroupNameInput('');
+      setGroupUsersInput('');
+      setStatus('Group DM created.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to create group DM');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleLeaveActiveDm() {
+    if (!activeDmRoomId) return;
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      await leaveRoom(activeDmRoomId);
+      setActiveDmRoomId(null);
+      setStatus('Left chat.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to leave chat');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   const activeDm = directMessages.find((room) => room.roomId === activeDmRoomId) ?? null;
 
   return (
@@ -149,6 +199,32 @@ export function HomeView({
               className="rounded bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               Add
+            </button>
+          </div>
+        </div>
+
+        <div className="border-b border-[#1e1f22] p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Create Group DM</p>
+          <div className="flex flex-col gap-2">
+            <input
+              value={groupNameInput}
+              onChange={(e) => setGroupNameInput(e.target.value)}
+              placeholder="Group name (optional)"
+              className="rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <input
+              value={groupUsersInput}
+              onChange={(e) => setGroupUsersInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateGroupDm()}
+              placeholder="alice, bob, @charlie:localhost"
+              className="rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <button
+              onClick={handleCreateGroupDm}
+              disabled={isBusy || !groupUsersInput.trim()}
+              className="rounded bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              Create Group
             </button>
           </div>
         </div>
@@ -197,7 +273,10 @@ export function HomeView({
                       : 'bg-[#1e1f22] text-[#b5bac1] hover:bg-[#35373c] hover:text-white'
                   }`}
                 >
-                  {room.name}
+                  <span className="block truncate">{room.name}</span>
+                  <span className="text-[10px] uppercase tracking-wide text-[#949ba4]">
+                    {room.isGroup ? `Group • ${room.memberCount} members` : 'Direct'}
+                  </span>
                 </button>
               ))}
             </div>
@@ -240,6 +319,16 @@ export function HomeView({
           </div>
         ) : (
           <>
+            <div className="border-b border-[#1e1f22] px-4 py-2">
+              <button
+                onClick={handleLeaveActiveDm}
+                disabled={isBusy}
+                className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                Leave Chat
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="space-y-3">
                 {messages.map((msg) => (

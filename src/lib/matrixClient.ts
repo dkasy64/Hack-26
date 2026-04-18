@@ -468,7 +468,11 @@ export interface DirectMessageInfo {
   roomId: string;
   name: string;
   peerUserId: string;
+  isGroup: boolean;
+  memberCount: number;
 }
+
+const GROUP_DM_ACCOUNT_DATA_TYPE = 'hackqu.group_dms';
 
 function getDirectMap(): Record<string, string[]> {
   const c = getClient();
@@ -484,6 +488,31 @@ function getDirectMap(): Record<string, string[]> {
   }
 
   return directMap;
+}
+
+function getGroupDmRoomIds(): string[] {
+  const c = getClient();
+  const event = c.getAccountData(GROUP_DM_ACCOUNT_DATA_TYPE);
+  if (!event) return [];
+
+  const content = event.getContent() as { roomIds?: string[] };
+  return Array.isArray(content.roomIds) ? content.roomIds : [];
+}
+
+async function addGroupDmRoomId(roomId: string): Promise<void> {
+  const c = getClient();
+  const existing = getGroupDmRoomIds();
+  if (existing.includes(roomId)) return;
+  await c.setAccountData(GROUP_DM_ACCOUNT_DATA_TYPE, { roomIds: [...existing, roomId] });
+}
+
+async function removeGroupDmRoomId(roomId: string): Promise<void> {
+  const c = getClient();
+  const existing = getGroupDmRoomIds();
+  if (!existing.includes(roomId)) return;
+  await c.setAccountData(GROUP_DM_ACCOUNT_DATA_TYPE, {
+    roomIds: existing.filter((id) => id !== roomId),
+  });
 }
 
 async function appendToDirectMap(peerUserId: string, roomId: string): Promise<void> {
@@ -512,15 +541,41 @@ export function getDirectMessageRooms(): DirectMessageInfo[] {
   const myUserId = c.getUserId() ?? '';
   const directMap = getDirectMap();
   const directRoomIds = new Set(Object.values(directMap).flat());
+  const groupDmRoomIds = new Set(getGroupDmRoomIds());
+
+  const spaceIds = new Set(
+    c
+      .getRooms()
+      .filter((room) => room.currentState.getStateEvents('m.room.create', '')?.getContent()?.type === 'm.space')
+      .map((room) => room.roomId)
+  );
+
+  const isChildOfAnySpace = (roomId: string): boolean => {
+    for (const spaceId of spaceIds) {
+      const spaceRoom = c.getRoom(spaceId);
+      if (!spaceRoom) continue;
+      if (spaceRoom.currentState.getStateEvents('m.space.child', roomId) != null) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const getRoomSortTs = (room: sdk.Room): number => {
+    const lastEvent = room.getLiveTimeline().getEvents().slice(-1)[0];
+    return lastEvent?.getTs() ?? 0;
+  };
 
   const rooms = c
     .getRooms()
     .filter((room) => room.getMyMembership() === 'join')
     .filter((room) => {
       if (directRoomIds.has(room.roomId)) return true;
+      if (groupDmRoomIds.has(room.roomId)) return true;
 
       const isSpace = room.currentState.getStateEvents('m.room.create', '')?.getContent()?.type === 'm.space';
       if (isSpace) return false;
+      if (isChildOfAnySpace(room.roomId)) return false;
 
       const joinedOrInvited = room
         .getMembers()
@@ -531,19 +586,52 @@ export function getDirectMessageRooms(): DirectMessageInfo[] {
     .map((room) => {
       const peerUserId = resolveDmPeerUserId(room, myUserId);
       const fallback = peerUserId ? peerUserId.replace(/^@/, '').split(':')[0] : 'Direct Message';
+      const joinedOrInvitedMembers = room
+        .getMembers()
+        .filter((m) => m.membership === 'join' || m.membership === 'invite');
+      const memberCount = joinedOrInvitedMembers.length;
+      const isGroup = groupDmRoomIds.has(room.roomId) || memberCount > 2;
+
+      const groupFallbackName = joinedOrInvitedMembers
+        .filter((m) => m.userId !== myUserId)
+        .map((m) => m.name || m.userId.replace(/^@/, '').split(':')[0])
+        .slice(0, 3)
+        .join(', ');
+
       const peerDisplayName = peerUserId
         ? room.getMember(peerUserId)?.name || c.getUser(peerUserId)?.displayName || fallback
         : fallback;
 
       return {
         roomId: room.roomId,
-        name: peerDisplayName,
+        name: room.name || (isGroup ? (groupFallbackName || 'Group DM') : peerDisplayName),
         peerUserId,
+        isGroup,
+        memberCount,
+        sortTs: getRoomSortTs(room),
       };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    });
 
-  return rooms;
+  // Merge duplicate 1:1 DM rooms with the same peer, keeping the most recently active room.
+  // Group chats are intentionally kept separate.
+  const mergedByPeer = new Map<string, (typeof rooms)[number]>();
+  for (const room of rooms) {
+    const key = !room.isGroup && room.peerUserId ? room.peerUserId : room.roomId;
+    const existing = mergedByPeer.get(key);
+    if (!existing || room.sortTs > existing.sortTs) {
+      mergedByPeer.set(key, room);
+    }
+  }
+
+  return Array.from(mergedByPeer.values())
+    .sort((a, b) => b.sortTs - a.sortTs || a.name.localeCompare(b.name))
+    .map(({ roomId, name, peerUserId, isGroup, memberCount }) => ({
+      roomId,
+      name,
+      peerUserId,
+      isGroup,
+      memberCount,
+    }));
 }
 
 export function onDirectMessagesChanged(
@@ -593,6 +681,45 @@ export async function createOrGetDirectMessage(userIdOrLocalpart: string): Promi
 
   await appendToDirectMap(peerUserId, result.room_id);
   return result.room_id;
+}
+
+export async function createGroupDirectMessage(
+  userIdsOrLocalparts: string[],
+  name?: string
+): Promise<string> {
+  const c = getClient();
+  const myUserId = c.getUserId();
+  if (!myUserId) throw new Error('User session not available');
+
+  const inviteUserIds = Array.from(
+    new Set(
+      userIdsOrLocalparts
+        .map((value) => normalizeInviteUserId(value))
+        .filter(Boolean)
+        .filter((userId) => userId !== myUserId)
+    )
+  );
+
+  if (inviteUserIds.length < 2) {
+    throw new Error('Group DM needs at least two other users');
+  }
+
+  const result = await c.createRoom({
+    name: name?.trim() || undefined,
+    invite: inviteUserIds,
+    is_direct: false,
+    preset: sdk.Preset.PrivateChat,
+    visibility: sdk.Visibility.Private,
+  });
+
+  await addGroupDmRoomId(result.room_id);
+  return result.room_id;
+}
+
+export async function leaveRoom(roomId: string): Promise<void> {
+  const c = getClient();
+  await c.leave(roomId);
+  await removeGroupDmRoomId(roomId);
 }
 
 export interface RoomMemberInfo {
