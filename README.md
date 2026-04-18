@@ -72,6 +72,15 @@ The channel sidebar includes a **Pending Invites** section.
 
 When someone invites you to a space or channel, it appears there with an **Accept** button. Click **Accept** to join immediately.
 
+## 7. Home View
+
+Click the **Home** button in the left sidebar to open a dedicated home area.
+
+From Home you can:
+- Add friends (by Matrix user ID or username)
+- Accept incoming invites
+- Open and send direct messages (DMs)
+
 ## Tech Stack
 
 - **Frontend:** React + Vite + Tailwind CSS

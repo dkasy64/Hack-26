@@ -3,6 +3,7 @@ import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelList } from './components/ChannelList';
 import { ChatWindow } from './components/ChatWindow';
 import { MemberList } from './components/MemberList';
+import { HomeView } from './components/HomeView';
 import { LoginScreen } from './components/LoginScreen';
 import { loginWithPassword, registerWithPassword, getClient } from './lib/matrixClient';
 import type { MatrixClient, Room } from 'matrix-js-sdk';
@@ -23,6 +24,7 @@ export default function App() {
   const [matrixClient, setMatrixClient] = useState<MatrixClient | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [isHomeActive, setIsHomeActive] = useState(true);
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -117,33 +119,46 @@ export default function App() {
       <ServerSidebar
         spaces={spaces}
         activeSpaceId={activeSpaceId}
+        isHomeActive={isHomeActive}
+        onSelectHome={() => {
+          setIsHomeActive(true);
+          setActiveSpaceId(null);
+          setActiveChannelId(null);
+        }}
         onSelectSpace={(id) => {
+          setIsHomeActive(false);
           setActiveSpaceId(id);
           setActiveChannelId(null);
         }}
       />
 
-      <ChannelList
-        channels={activeChannels}
-        activeChannelId={activeChannelId}
-        spaceName={spaces.find((s) => s.id === activeSpaceId)?.name ?? ''}
-        onSelectChannel={setActiveChannelId}
-        activeSpaceId={activeSpaceId}
-        onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
-        onChannelCreated={(channel) => setChannels((prev) => [...prev, channel])}
-      />
+      {isHomeActive ? (
+        <HomeView matrixClient={matrixClient} />
+      ) : (
+        <>
+          <ChannelList
+            channels={activeChannels}
+            activeChannelId={activeChannelId}
+            spaceName={spaces.find((s) => s.id === activeSpaceId)?.name ?? ''}
+            onSelectChannel={setActiveChannelId}
+            activeSpaceId={activeSpaceId}
+            onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
+            onChannelCreated={(channel) => setChannels((prev) => [...prev, channel])}
+          />
 
-      <ChatWindow
-        channelId={activeChannelId}
-        matrixClient={matrixClient}
-      />
+          <ChatWindow
+            channelId={activeChannelId}
+            matrixClient={matrixClient}
+          />
 
-      <MemberList
-        activeSpaceId={activeSpaceId}
-        activeChannelId={activeChannelId}
-        activeSpaceName={activeSpace?.name ?? ''}
-        activeChannelName={activeChannel?.name ?? ''}
-      />
+          <MemberList
+            activeSpaceId={activeSpaceId}
+            activeChannelId={activeChannelId}
+            activeSpaceName={activeSpace?.name ?? ''}
+            activeChannelName={activeChannel?.name ?? ''}
+          />
+        </>
+      )}
     </div>
   );
 }

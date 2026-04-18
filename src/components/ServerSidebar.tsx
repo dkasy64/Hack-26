@@ -7,6 +7,8 @@ import type { Space } from '../App';
 interface Props {
   spaces: Space[];
   activeSpaceId: string | null;
+  isHomeActive: boolean;
+  onSelectHome: () => void;
   onSelectSpace: (id: string) => void;
 }
 
@@ -34,11 +36,16 @@ function SpaceIcon({ space, active, onClick }: { space: Space; active: boolean; 
   );
 }
 
-export function ServerSidebar({ spaces, activeSpaceId, onSelectSpace }: Props) {
+export function ServerSidebar({ spaces, activeSpaceId, isHomeActive, onSelectHome, onSelectSpace }: Props) {
   return (
     <nav className="flex w-[72px] flex-col items-center gap-2 overflow-y-auto bg-[#1e1f22] py-3">
       {/* Home button */}
-      <button className="flex h-12 w-12 items-center justify-center rounded-[24px] bg-indigo-600 text-white transition-all hover:rounded-[16px]">
+      <button
+        onClick={onSelectHome}
+        className={`flex h-12 w-12 items-center justify-center rounded-[24px] text-white transition-all hover:rounded-[16px] ${
+          isHomeActive ? 'bg-indigo-600' : 'bg-[#36393f] hover:bg-indigo-600'
+        }`}
+      >
         <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
         </svg>

@@ -253,6 +253,134 @@ export async function inviteUserToChannel(channelRoomId: string, userIdOrLocalpa
   await getClient().invite(channelRoomId, userId);
 }
 
+export interface DirectMessageInfo {
+  roomId: string;
+  name: string;
+  peerUserId: string;
+}
+
+function getDirectMap(): Record<string, string[]> {
+  const c = getClient();
+  const directEvent = c.getAccountData('m.direct');
+  if (!directEvent) return {};
+
+  const content = directEvent.getContent() as Record<string, string[] | undefined>;
+  const directMap: Record<string, string[]> = {};
+
+  for (const [userId, roomIds] of Object.entries(content)) {
+    if (!Array.isArray(roomIds)) continue;
+    directMap[userId] = roomIds;
+  }
+
+  return directMap;
+}
+
+async function appendToDirectMap(peerUserId: string, roomId: string): Promise<void> {
+  const c = getClient();
+  const directMap = getDirectMap();
+  const existing = directMap[peerUserId] ?? [];
+
+  if (!existing.includes(roomId)) {
+    directMap[peerUserId] = [...existing, roomId];
+    await c.setAccountData('m.direct', directMap);
+  }
+}
+
+function resolveDmPeerUserId(room: sdk.Room, myUserId: string): string {
+  const members = room
+    .getMembers()
+    .filter((m) => m.membership === 'join' || m.membership === 'invite')
+    .map((m) => m.userId);
+
+  const peer = members.find((userId) => userId !== myUserId);
+  return peer ?? '';
+}
+
+export function getDirectMessageRooms(): DirectMessageInfo[] {
+  const c = getClient();
+  const myUserId = c.getUserId() ?? '';
+  const directMap = getDirectMap();
+  const directRoomIds = new Set(Object.values(directMap).flat());
+
+  const rooms = c
+    .getRooms()
+    .filter((room) => room.getMyMembership() === 'join')
+    .filter((room) => {
+      if (directRoomIds.has(room.roomId)) return true;
+
+      const isSpace = room.currentState.getStateEvents('m.room.create', '')?.getContent()?.type === 'm.space';
+      if (isSpace) return false;
+
+      const joinedOrInvited = room
+        .getMembers()
+        .filter((m) => m.membership === 'join' || m.membership === 'invite').length;
+
+      return joinedOrInvited <= 2;
+    })
+    .map((room) => {
+      const peerUserId = resolveDmPeerUserId(room, myUserId);
+      const fallback = peerUserId ? peerUserId.replace(/^@/, '').split(':')[0] : 'Direct Message';
+
+      return {
+        roomId: room.roomId,
+        name: room.name || fallback,
+        peerUserId,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return rooms;
+}
+
+export function onDirectMessagesChanged(
+  handler: (rooms: DirectMessageInfo[]) => void
+): () => void {
+  const c = getClient();
+
+  const emit = () => handler(getDirectMessageRooms());
+
+  const syncListener = () => emit();
+  const timelineListener = (event: sdk.MatrixEvent) => {
+    const type = event.getType();
+    if (type !== 'm.room.member' && type !== 'm.room.create' && type !== 'm.room.name' && type !== 'm.room.message') return;
+    emit();
+  };
+
+  c.on('sync' as any, syncListener);
+  c.on(sdk.RoomEvent.Timeline, timelineListener);
+
+  return () => {
+    c.off('sync' as any, syncListener);
+    c.off(sdk.RoomEvent.Timeline, timelineListener);
+  };
+}
+
+export async function createOrGetDirectMessage(userIdOrLocalpart: string): Promise<string> {
+  const c = getClient();
+  const myUserId = c.getUserId();
+  if (!myUserId) throw new Error('User session not available');
+
+  const peerUserId = normalizeInviteUserId(userIdOrLocalpart);
+  if (!peerUserId) throw new Error('User is required');
+
+  if (peerUserId === myUserId) {
+    throw new Error('Cannot create a DM with yourself');
+  }
+
+  const existing = getDirectMessageRooms().find((room) => room.peerUserId === peerUserId);
+  if (existing) return existing.roomId;
+
+  const result = await c.createRoom({
+    is_direct: true,
+    invite: [peerUserId],
+    preset: sdk.Preset.PrivateChat,
+    visibility: sdk.Visibility.Private,
+  });
+
+  await appendToDirectMap(peerUserId, result.room_id);
+  return result.room_id;
+}
+
 export interface RoomMemberInfo {
   userId: string;
   displayName: string;
