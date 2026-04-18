@@ -58,11 +58,19 @@ Choose your homeserver from the dropdown: **Default (10.111.110.222:8008)** or *
 
 Inside a selected space, use the **Invite to Space** box in the channel sidebar to invite users into that space.
 
+Inviting a user to a space now also auto-invites them to all channels currently inside that space.
+
 When a channel is selected, use **Invite to Channel** to invite users directly to that room.
 
 You can enter either a full Matrix user ID (for example `@alice:localhost`) or just a username.
 
 The right-hand **Members** panel shows current joined and invited members for the selected space and channel.
+
+## 6. Accept Invites
+
+The channel sidebar includes a **Pending Invites** section.
+
+When someone invites you to a space or channel, it appears there with an **Accept** button. Click **Accept** to join immediately.
 
 ## Tech Stack
 

@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Channel, Space } from '../App';
 import {
+  acceptInvite,
   createSpace,
   createChannel,
+  getPendingInvites,
   inviteUserToSpace,
   inviteUserToChannel,
+  onPendingInvitesChanged,
+  type PendingInviteInfo,
 } from '../lib/matrixClient';
 
 interface Props {
@@ -34,6 +38,13 @@ export function ChannelList({
   const [channelInviteUser, setChannelInviteUser] = useState('');
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [pendingInvites, setPendingInvites] = useState<PendingInviteInfo[]>([]);
+  const [acceptingInviteRoomId, setAcceptingInviteRoomId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingInvites(getPendingInvites());
+    return onPendingInvitesChanged(setPendingInvites);
+  }, []);
 
   async function handleCreateSpace() {
     if (!newSpaceName.trim()) return;
@@ -77,6 +88,22 @@ export function ChannelList({
     }
   }
 
+  async function handleAcceptInvite(roomId: string) {
+    setInviteError(null);
+    setInviteStatus(null);
+    setAcceptingInviteRoomId(roomId);
+
+    try {
+      await acceptInvite(roomId);
+      setPendingInvites((prev) => prev.filter((invite) => invite.roomId !== roomId));
+      setInviteStatus('Invite accepted.');
+    } catch (e: any) {
+      setInviteError(e?.message ?? 'Failed to accept invite');
+    } finally {
+      setAcceptingInviteRoomId(null);
+    }
+  }
+
   return (
     <aside className="flex w-60 flex-col bg-[#2b2d31]">
       <div className="flex h-12 items-center justify-between border-b border-[#1e1f22] px-4 shadow-sm">
@@ -116,6 +143,34 @@ export function ChannelList({
       )}
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
+        <div className="mb-3 rounded bg-[#232428] p-2">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#949ba4]">
+            Pending Invites
+          </p>
+
+          {pendingInvites.length === 0 ? (
+            <p className="text-xs text-[#949ba4]">No pending invites.</p>
+          ) : (
+            <div className="space-y-1">
+              {pendingInvites.map((invite) => (
+                <div key={invite.roomId} className="flex items-center justify-between gap-2 rounded bg-[#1e1f22] px-2 py-1.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-semibold text-white">{invite.name}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-[#949ba4]">{invite.kind}</p>
+                  </div>
+                  <button
+                    onClick={() => handleAcceptInvite(invite.roomId)}
+                    disabled={acceptingInviteRoomId === invite.roomId}
+                    className="rounded bg-green-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-green-500 disabled:opacity-50"
+                  >
+                    {acceptingInviteRoomId === invite.roomId ? 'Joining...' : 'Accept'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {activeSpaceId && (
           <div className="mb-3 rounded bg-[#232428] p-2">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#949ba4]">

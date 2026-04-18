@@ -92,7 +92,8 @@ export default function App() {
       );
     }
 
-    matrixClient.once('sync' as any, syncRooms);
+    syncRooms();
+    matrixClient.on('sync' as any, syncRooms);
     return () => { matrixClient.off('sync' as any, syncRooms); };
   }, [matrixClient]);
 

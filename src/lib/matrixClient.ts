@@ -166,7 +166,55 @@ export async function createChannel(
     result.room_id
   );
 
+  // Keep channel membership aligned with its parent space.
+  await inviteSpaceMembersToRoom(spaceRoomId, result.room_id);
+
   return result.room_id;
+}
+
+function getChannelsInSpace(spaceRoomId: string): sdk.Room[] {
+  const c = getClient();
+  const allRooms = c.getRooms();
+  const spaceRoom = c.getRoom(spaceRoomId);
+  if (!spaceRoom) return [];
+
+  return allRooms.filter((room) => {
+    if (room.roomId === spaceRoomId) return false;
+
+    const isSpace = room.currentState.getStateEvents('m.room.create', '')?.getContent()?.type === 'm.space';
+    if (isSpace) return false;
+
+    return spaceRoom.currentState.getStateEvents('m.space.child', room.roomId) != null;
+  });
+}
+
+async function inviteUserToRoomIfNeeded(roomId: string, userId: string): Promise<void> {
+  const c = getClient();
+  const room = c.getRoom(roomId);
+  const membership = room?.getMember(userId)?.membership;
+
+  if (membership === 'join' || membership === 'invite') {
+    return;
+  }
+
+  await c.invite(roomId, userId);
+}
+
+async function inviteSpaceMembersToRoom(spaceRoomId: string, targetRoomId: string): Promise<void> {
+  const c = getClient();
+  const spaceRoom = c.getRoom(spaceRoomId);
+  if (!spaceRoom) return;
+
+  const selfUserId = c.getUserId();
+  const candidateUserIds = spaceRoom
+    .getMembers()
+    .filter((member) => member.membership === 'join' || member.membership === 'invite')
+    .map((member) => member.userId)
+    .filter((userId) => userId !== selfUserId);
+
+  for (const userId of candidateUserIds) {
+    await inviteUserToRoomIfNeeded(targetRoomId, userId);
+  }
 }
 
 function normalizeInviteUserId(input: string): string {
@@ -189,7 +237,14 @@ function normalizeInviteUserId(input: string): string {
 export async function inviteUserToSpace(spaceRoomId: string, userIdOrLocalpart: string): Promise<void> {
   const userId = normalizeInviteUserId(userIdOrLocalpart);
   if (!userId) throw new Error('User is required');
-  await getClient().invite(spaceRoomId, userId);
+
+  await inviteUserToRoomIfNeeded(spaceRoomId, userId);
+
+  // Also invite to every child channel so space membership is reflected across channels.
+  const channels = getChannelsInSpace(spaceRoomId);
+  for (const channel of channels) {
+    await inviteUserToRoomIfNeeded(channel.roomId, userId);
+  }
 }
 
 export async function inviteUserToChannel(channelRoomId: string, userIdOrLocalpart: string): Promise<void> {
@@ -202,6 +257,61 @@ export interface RoomMemberInfo {
   userId: string;
   displayName: string;
   membership: 'join' | 'invite';
+}
+
+export interface PendingInviteInfo {
+  roomId: string;
+  name: string;
+  kind: 'space' | 'channel';
+}
+
+export function getPendingInvites(): PendingInviteInfo[] {
+  const c = getClient();
+
+  return c
+    .getRooms()
+    .filter((room) => room.getMyMembership() === 'invite')
+    .map((room) => {
+      const kind: PendingInviteInfo['kind'] = room.currentState.getStateEvents('m.room.create', '')?.getContent()?.type === 'm.space'
+        ? 'space'
+        : 'channel';
+
+      const fallbackName = kind === 'space' ? 'Invited Space' : 'Invited Channel';
+
+      return {
+        roomId: room.roomId,
+        name: room.name || fallbackName,
+        kind,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function acceptInvite(roomId: string): Promise<void> {
+  await getClient().joinRoom(roomId);
+}
+
+export function onPendingInvitesChanged(
+  handler: (invites: PendingInviteInfo[]) => void
+): () => void {
+  const c = getClient();
+
+  const emit = () => handler(getPendingInvites());
+
+  const syncListener = () => emit();
+  const timelineListener = (event: sdk.MatrixEvent) => {
+    const type = event.getType();
+    if (type !== 'm.room.member' && type !== 'm.room.create' && type !== 'm.room.name') return;
+    emit();
+  };
+
+  c.on('sync' as any, syncListener);
+  c.on(sdk.RoomEvent.Timeline, timelineListener);
+
+  return () => {
+    c.off('sync' as any, syncListener);
+    c.off(sdk.RoomEvent.Timeline, timelineListener);
+  };
 }
 
 export function getRoomMembers(roomId: string): RoomMemberInfo[] {
