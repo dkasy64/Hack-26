@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { sendMessage, onRoomMessage, getRoomHistory, getClient } from '../lib/matrixClient';
+import { EmojiPicker } from './EmojiPicker';
 
 interface Message {
   eventId: string;
@@ -174,8 +175,10 @@ function VideoCall({ roomId, onClose }: { roomId: string; onClose: () => void })
 export function ChatWindow({ channelId, matrixClient }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!channelId) return;
@@ -238,8 +241,27 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
       </div>
 
       <div className="px-4 pb-6 pt-2">
-        <div className="flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+        <div className="relative flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+          {showEmojiPicker && (
+            <div className="absolute left-4 bottom-full z-10">
+              <EmojiPicker
+                onSelect={(emoji) => {
+                  setDraft((value) => value + emoji);
+                  setShowEmojiPicker(false);
+                  inputRef.current?.focus();
+                }}
+              />
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker((value) => !value)}
+            className="rounded bg-[#2d2f35] px-3 py-2 text-sm text-[#c7c9cc] hover:bg-[#3b3e45]"
+          >
+            😊
+          </button>
           <input
+            ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
