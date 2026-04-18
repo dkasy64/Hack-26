@@ -7,6 +7,7 @@ import {
   getPendingInvites,
   inviteUserToSpace,
   inviteUserToChannel,
+  leaveRoom,
   onPendingInvitesChanged,
   type PendingInviteInfo,
 } from '../lib/matrixClient';
@@ -21,6 +22,7 @@ interface Props {
   onOpenProfile: () => void;
   onSelectChannel: (id: string) => void;
   activeSpaceId: string | null;
+  onSpaceLeft: () => void;
   onSpaceCreated: (space: Space) => void;
   onChannelCreated: (channel: Channel) => void;
 }
@@ -35,6 +37,7 @@ export function ChannelList({
   onOpenProfile,
   onSelectChannel,
   activeSpaceId,
+  onSpaceLeft,
   onSpaceCreated,
   onChannelCreated,
 }: Props) {
@@ -48,6 +51,7 @@ export function ChannelList({
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [pendingInvites, setPendingInvites] = useState<PendingInviteInfo[]>([]);
   const [acceptingInviteRoomId, setAcceptingInviteRoomId] = useState<string | null>(null);
+  const [leavingSpace, setLeavingSpace] = useState(false);
 
   useEffect(() => {
     setPendingInvites(getPendingInvites());
@@ -112,10 +116,36 @@ export function ChannelList({
     }
   }
 
+  async function handleLeaveSpace() {
+    if (!activeSpaceId) return;
+    setInviteError(null);
+    setInviteStatus(null);
+    setLeavingSpace(true);
+
+    try {
+      await leaveRoom(activeSpaceId);
+      onSpaceLeft();
+      setInviteStatus('Left space.');
+    } catch (e: any) {
+      setInviteError(e?.message ?? 'Failed to leave space');
+    } finally {
+      setLeavingSpace(false);
+    }
+  }
+
   return (
     <aside className="flex w-60 flex-col bg-[#2b2d31]">
       <div className="flex h-12 items-center justify-between border-b border-[#1e1f22] px-4 shadow-sm">
         <span className="font-semibold text-white truncate">{spaceName || 'Select a Space'}</span>
+        {activeSpaceId && (
+          <button
+            onClick={handleLeaveSpace}
+            disabled={leavingSpace}
+            className="rounded bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+          >
+            {leavingSpace ? 'Leaving...' : 'Leave'}
+          </button>
+        )}
       </div>
 
       {!activeSpaceId && (

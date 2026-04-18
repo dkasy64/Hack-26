@@ -181,6 +181,10 @@ export default function App() {
             onOpenProfile={() => setIsProfileEditorOpen(true)}
             onSelectChannel={setActiveChannelId}
             activeSpaceId={activeSpaceId}
+            onSpaceLeft={() => {
+              setActiveSpaceId(null);
+              setActiveChannelId(null);
+            }}
             onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
             onChannelCreated={(channel) => setChannels((prev) => [...prev, channel])}
           />

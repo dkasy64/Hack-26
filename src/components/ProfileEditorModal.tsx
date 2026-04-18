@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  getBio,
+  setBio,
   updateCurrentUserProfile,
   type CurrentUserProfile,
 } from '../lib/matrixClient';
@@ -13,15 +15,33 @@ interface Props {
 
 export function ProfileEditorModal({ isOpen, profile, onClose, onSaved }: Props) {
   const [displayName, setDisplayName] = useState(profile.displayName);
+  const [bio, setBioDraft] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+
+    let isMounted = true;
+
     setDisplayName(profile.displayName);
+    setBioDraft('');
     setSelectedFile(null);
     setError(null);
+
+    (async () => {
+      try {
+        const currentBio = await getBio();
+        if (isMounted) setBioDraft(currentBio);
+      } catch {
+        if (isMounted) setError('Failed to load bio');
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isOpen, profile.displayName]);
 
   const previewUrl = useMemo(() => {
@@ -48,6 +68,9 @@ export function ProfileEditorModal({ isOpen, profile, onClose, onSaved }: Props)
         displayName,
         avatarFile: selectedFile,
       });
+
+      await setBio(bio);
+
       onSaved(updated);
       onClose();
     } catch (e: any) {
@@ -63,7 +86,7 @@ export function ProfileEditorModal({ isOpen, profile, onClose, onSaved }: Props)
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-md rounded-lg bg-[#2b2d31] p-5 shadow-2xl">
         <h2 className="text-lg font-semibold text-white">Edit Profile</h2>
-        <p className="mt-1 text-xs text-[#949ba4]">Update your display name and avatar.</p>
+        <p className="mt-1 text-xs text-[#949ba4]">Update your display name, avatar, and bio.</p>
 
         <div className="mt-4 flex items-center gap-3">
           {previewUrl ? (
@@ -98,6 +121,19 @@ export function ProfileEditorModal({ isOpen, profile, onClose, onSaved }: Props)
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             className="w-full rounded bg-[#1e1f22] px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
             placeholder="Your display name"
+          />
+        </div>
+
+        <div className="mt-4">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#b5bac1]">
+            Bio
+          </label>
+          <textarea
+            value={bio}
+            onChange={(e) => setBioDraft(e.target.value)}
+            rows={3}
+            className="w-full resize-none rounded bg-[#1e1f22] px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Tell others about yourself..."
           />
         </div>
 

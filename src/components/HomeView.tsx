@@ -3,18 +3,29 @@ import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import {
   acceptInvite,
   createOrGetDirectMessage,
+  createGroupDirectMessage,
   getDirectMessageRooms,
+  getRoomMembers,
+  getRoomMembershipEvents,
   getPendingInvites,
   getRoomHistory,
+  inviteUserToRoom,
+  leaveRoom,
   onDirectMessagesChanged,
   onPendingInvitesChanged,
+  onRoomMembersChanged,
+  onRoomMembershipEvent,
   onRoomMessage,
   resolveMxcAvatarUrl,
   sendMessage,
   type DirectMessageInfo,
   type PendingInviteInfo,
+  type RoomMemberInfo,
+  type RoomMembershipEventInfo,
 } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
+import { ProfileModal } from './ProfileModal';
+import { useTheme } from './ThemeProvider';
 
 interface Message {
   eventId: string;
@@ -39,17 +50,24 @@ export function HomeView({
   onOpenProfile,
 }: Props) {
   const [friendInput, setFriendInput] = useState('');
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [groupUsersInput, setGroupUsersInput] = useState('');
   const [pendingInvites, setPendingInvites] = useState<PendingInviteInfo[]>([]);
   const [directMessages, setDirectMessages] = useState<DirectMessageInfo[]>([]);
   const [activeDmRoomId, setActiveDmRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [participants, setParticipants] = useState<RoomMemberInfo[]>([]);
+  const [membershipEvents, setMembershipEvents] = useState<RoomMembershipEventInfo[]>([]);
+  const [groupInviteInput, setGroupInviteInput] = useState('');
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     const loadInvites = () => setPendingInvites(getPendingInvites());
@@ -80,6 +98,30 @@ export function HomeView({
     });
 
     return unsub;
+  }, [activeDmRoomId]);
+
+  useEffect(() => {
+    if (!activeDmRoomId) {
+      setParticipants([]);
+      setMembershipEvents([]);
+      return;
+    }
+
+    setParticipants(getRoomMembers(activeDmRoomId));
+    setMembershipEvents(getRoomMembershipEvents(activeDmRoomId));
+
+    const unsubMembers = onRoomMembersChanged(activeDmRoomId, setParticipants);
+    const unsubMembershipEvents = onRoomMembershipEvent(activeDmRoomId, (event) => {
+      setMembershipEvents((prev) => {
+        if (prev.some((e) => e.eventId === event.eventId)) return prev;
+        return [...prev, event].slice(-25);
+      });
+    });
+
+    return () => {
+      unsubMembers();
+      unsubMembershipEvents();
+    };
   }, [activeDmRoomId]);
 
   useEffect(() => {
@@ -128,11 +170,75 @@ export function HomeView({
     setDraft('');
   }
 
+  async function handleCreateGroupDm() {
+    const parsedUsers = groupUsersInput
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (parsedUsers.length < 2) {
+      setError('Enter at least two users for a group DM');
+      return;
+    }
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      const roomId = await createGroupDirectMessage(parsedUsers, groupNameInput.trim() || undefined);
+      setActiveDmRoomId(roomId);
+      setGroupNameInput('');
+      setGroupUsersInput('');
+      setStatus('Group DM created.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to create group DM');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleLeaveActiveDm() {
+    if (!activeDmRoomId) return;
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      await leaveRoom(activeDmRoomId);
+      setActiveDmRoomId(null);
+      setStatus('Left chat.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to leave chat');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleInviteToActiveGroupDm() {
+    if (!activeDmRoomId || !groupInviteInput.trim()) return;
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      await inviteUserToRoom(activeDmRoomId, groupInviteInput.trim());
+      setGroupInviteInput('');
+      setStatus('Invitation sent.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to invite user to group chat');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   const activeDm = directMessages.find((room) => room.roomId === activeDmRoomId) ?? null;
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <aside className="flex w-72 flex-col border-r border-[#1e1f22] bg-[#2b2d31]">
+      <aside className="flex w-72 flex-col border-r" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-secondary)' }}>
         <div className="border-b border-[#1e1f22] p-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Add Friend</p>
           <div className="flex gap-1">
@@ -141,7 +247,8 @@ export function HomeView({
               onChange={(e) => setFriendInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAddFriendAndDm()}
               placeholder="@user:server or username"
-              className="flex-1 rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+              className="flex-1 rounded px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+              style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             />
             <button
               onClick={handleAddFriendAndDm}
@@ -154,28 +261,29 @@ export function HomeView({
         </div>
 
         <div className="border-b border-[#1e1f22] p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Invites</p>
-          {pendingInvites.length === 0 ? (
-            <p className="text-xs text-[#949ba4]">No pending invites.</p>
-          ) : (
-            <div className="space-y-1">
-              {pendingInvites.map((invite) => (
-                <div key={invite.roomId} className="rounded bg-[#1e1f22] px-2 py-1.5">
-                  <p className="truncate text-xs font-semibold text-white">{invite.name}</p>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <span className="text-[10px] uppercase tracking-wide text-[#949ba4]">{invite.kind}</span>
-                    <button
-                      onClick={() => handleAcceptInvite(invite)}
-                      disabled={isBusy}
-                      className="rounded bg-green-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-green-500 disabled:opacity-50"
-                    >
-                      Accept
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Create Group DM</p>
+          <div className="flex flex-col gap-2">
+            <input
+              value={groupNameInput}
+              onChange={(e) => setGroupNameInput(e.target.value)}
+              placeholder="Group name (optional)"
+              className="rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <input
+              value={groupUsersInput}
+              onChange={(e) => setGroupUsersInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateGroupDm()}
+              placeholder="alice, bob, @charlie:localhost"
+              className="rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <button
+              onClick={handleCreateGroupDm}
+              disabled={isBusy || !groupUsersInput.trim()}
+              className="rounded bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              Create Group
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
@@ -197,11 +305,26 @@ export function HomeView({
                       : 'bg-[#1e1f22] text-[#b5bac1] hover:bg-[#35373c] hover:text-white'
                   }`}
                 >
-                  {room.name}
+                  <span className="block truncate">{room.name}</span>
+                  <span className="text-[10px] uppercase tracking-wide text-[#949ba4]">
+                    {room.isGroup ? `Group • ${room.memberCount} members` : 'Direct'}
+                  </span>
                 </button>
               ))}
             </div>
           )}
+        </div>
+
+        <div className="border-t border-[#1e1f22] p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Theme</span>
+            <button
+              onClick={toggleTheme}
+              className="rounded bg-[#1e1f22] px-3 py-1 text-xs text-white hover:bg-[#35373c]"
+            >
+              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            </button>
+          </div>
         </div>
 
         <button
@@ -222,9 +345,9 @@ export function HomeView({
         </button>
       </aside>
 
-      <main className="flex flex-1 flex-col bg-[#313338]">
+      <main className="flex min-w-0 flex-1 flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
         <div className="flex h-12 items-center border-b border-[#1e1f22] px-4">
-          <span className="text-sm font-semibold text-white">{activeDm ? activeDm.name : 'Home'}</span>
+          <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{activeDm ? activeDm.name : 'Home'}</span>
         </div>
 
         {(status || error) && (
@@ -240,6 +363,16 @@ export function HomeView({
           </div>
         ) : (
           <>
+            <div className="border-b border-[#1e1f22] px-4 py-2">
+              <button
+                onClick={handleLeaveActiveDm}
+                disabled={isBusy}
+                className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                Leave Chat
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="space-y-3">
                 {messages.map((msg) => (
@@ -249,6 +382,7 @@ export function HomeView({
                     myUserId={matrixClient.getUserId() ?? ''}
                     matrixClient={matrixClient}
                     roomId={activeDmRoomId}
+                    onClickUsername={setProfileModalUserId}
                   />
                 ))}
               </div>
@@ -256,7 +390,7 @@ export function HomeView({
             </div>
 
             <div className="px-4 pb-6 pt-2">
-              <div className="relative flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+              <div className="relative flex items-center gap-2 rounded-lg px-4 py-2.5" style={{ backgroundColor: 'var(--bg-input)' }}>
                 {showEmojiPicker && (
                   <div className="absolute left-4 bottom-full z-10">
                     <EmojiPicker
@@ -281,7 +415,8 @@ export function HomeView({
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                   placeholder="Send a direct message"
-                  className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[#6d6f78]"
+                  className="flex-1 bg-transparent text-sm outline-none"
+                  style={{ color: 'var(--text-primary)' }}
                 />
                 <button
                   onClick={handleSend}
@@ -295,6 +430,70 @@ export function HomeView({
           </>
         )}
       </main>
+
+      {activeDm?.isGroup && activeDmRoomId && (
+        <aside className="flex w-64 flex-col border-l border-[#1e1f22] bg-[#2b2d31]">
+          <div className="flex h-12 items-center border-b border-[#1e1f22] px-4">
+            <span className="text-sm font-semibold text-white">Group Members</span>
+          </div>
+
+          <div className="border-b border-[#1e1f22] p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Invite Member</p>
+            <div className="flex gap-2">
+              <input
+                value={groupInviteInput}
+                onChange={(e) => setGroupInviteInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleInviteToActiveGroupDm()}
+                placeholder="@user:server"
+                className="flex-1 rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button
+                onClick={handleInviteToActiveGroupDm}
+                disabled={isBusy || !groupInviteInput.trim()}
+                className="rounded bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">
+              Members ({participants.length})
+            </p>
+            {participants.length === 0 ? (
+              <p className="text-xs text-[#6d6f78]">No visible members.</p>
+            ) : (
+              <div className="space-y-1">
+                {participants.map((participant) => (
+                  <div key={participant.userId} className="rounded bg-[#232428] px-2 py-1.5">
+                    <p className="truncate text-xs font-semibold text-white">{participant.displayName}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-[#949ba4]">{participant.membership}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Recent Activity</p>
+            {membershipEvents.length === 0 ? (
+              <p className="text-xs text-[#6d6f78]">No recent join/leave activity.</p>
+            ) : (
+              <div className="space-y-1">
+                {membershipEvents.slice(-8).map((event) => (
+                  <p key={event.eventId} className="rounded bg-[#232428] px-2 py-1.5 text-xs text-[#b5bac1]">
+                    <span className="font-semibold text-white">{event.displayName}</span>{' '}
+                    {event.membership === 'join' ? 'joined' : 'left'}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {profileModalUserId && (
+        <ProfileModal userId={profileModalUserId} onClose={() => setProfileModalUserId(null)} />
+      )}
     </div>
   );
 }
@@ -313,11 +512,13 @@ function MessageRow({
   myUserId,
   matrixClient,
   roomId,
+  onClickUsername,
 }: {
   message: Message;
   myUserId: string;
   matrixClient: MatrixClient;
   roomId: string;
+  onClickUsername: (userId: string) => void;
 }) {
   const isMe = message.sender === myUserId;
   const room = matrixClient.getRoom(roomId);
@@ -338,7 +539,12 @@ function MessageRow({
       )}
       <div>
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold text-white">{displayName}</span>
+          <button
+            onClick={() => onClickUsername(message.sender)}
+            className="text-sm font-semibold text-white hover:underline"
+          >
+            {displayName}
+          </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
         </div>
         <p className="text-sm text-[#dcddde]">{message.body}</p>
