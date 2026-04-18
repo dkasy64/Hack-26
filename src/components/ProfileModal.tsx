@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getUserProfile, getBio, getClient } from '../lib/matrixClient';
+import { getUserProfile, getRemoteUserProfile, getBio, getClient } from '../lib/matrixClient';
 
 interface Props {
   userId: string;
@@ -7,7 +7,7 @@ interface Props {
 }
 
 export function ProfileModal({ userId, onClose }: Props) {
-  const [profile, setProfile] = useState<{ displayName?: string; avatarUrl?: string } | null>(null);
+  const [profile, setProfile] = useState<{ displayName?: string; avatarUrl?: string | null } | null>(null);
   const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(true);
   const isSelf = userId === getClient().getUserId();
@@ -15,8 +15,14 @@ export function ProfileModal({ userId, onClose }: Props) {
   useEffect(() => {
     async function loadProfile() {
       try {
-        const profileData = await getUserProfile(userId);
-        setProfile(profileData);
+        setProfile(getUserProfile(userId));
+
+        const profileData = await getRemoteUserProfile(userId);
+        setProfile({
+          displayName: profileData.displayName,
+          avatarUrl: profileData.avatarUrl,
+        });
+
         if (isSelf) {
           const bioData = await getBio();
           setBio(bioData);
@@ -41,7 +47,7 @@ export function ProfileModal({ userId, onClose }: Props) {
   }
 
   const displayName = profile?.displayName || userId.split(':')[0].replace('@', '');
-  const avatarUrl = profile?.avatarUrl ? `http://localhost:8008/_matrix/media/r0/thumbnail/${profile.avatarUrl.split('/').pop()}?width=128&height=128&method=crop` : null;
+  const avatarUrl = profile?.avatarUrl ?? null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={onClose}>

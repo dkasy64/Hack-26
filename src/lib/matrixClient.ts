@@ -955,12 +955,18 @@ export function getRoomHistory(
 
 // ─── User Profile ────────────────────────────────────────────────────────────
 
-export async function getUserProfile(userId: string): Promise<{ displayName?: string; avatarUrl?: string }> {
+export async function getRemoteUserProfile(userId: string): Promise<UserProfileInfo> {
   const c = getClient();
   const profile = await c.getProfileInfo(userId);
+
+  const displayName = profile.displayname || localpartFromUserId(userId);
+  const avatarMxcUrl = profile.avatar_url ?? null;
+
   return {
-    displayName: profile.displayname,
-    avatarUrl: profile.avatar_url,
+    userId,
+    displayName,
+    avatarMxcUrl,
+    avatarUrl: resolveMxcAvatarUrl(avatarMxcUrl),
   };
 }
 
