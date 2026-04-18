@@ -11,6 +11,46 @@
 import * as sdk from 'matrix-js-sdk';
 
 const HOMESERVER = 'http://localhost:8008';
+const MAX_429_RETRIES = 3;
+const DEFAULT_RETRY_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitedError(error: any): boolean {
+  const statusCode = Number(error?.statusCode ?? error?.httpStatus ?? error?.data?.status);
+  if (statusCode === 429) return true;
+
+  const message = String(error?.message ?? '');
+  return message.includes('[429]') || message.toLowerCase().includes('too many requests');
+}
+
+function getRetryAfterMs(error: any): number {
+  const retryAfter = Number(error?.data?.retry_after_ms ?? error?.retry_after_ms);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return retryAfter;
+  }
+  return DEFAULT_RETRY_MS;
+}
+
+async function withRateLimitRetry<T>(action: () => Promise<T>): Promise<T> {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await action();
+    } catch (error: any) {
+      if (!isRateLimitedError(error) || attempt >= MAX_429_RETRIES) {
+        throw error;
+      }
+
+      const waitMs = getRetryAfterMs(error) + attempt * 250;
+      attempt += 1;
+      await sleep(waitMs);
+    }
+  }
+}
 
 function normalizeHomeserver(input: string): string {
   const raw = input.trim() || HOMESERVER;
@@ -167,7 +207,15 @@ export async function loginWithPassword(
   // Temporary client just for login — no storage needed yet
   const tempClient = sdk.createClient({ baseUrl: normalizedHomeserver });
 
-  const response = await tempClient.loginWithPassword(normalizedUsername, password);
+  let response: Awaited<ReturnType<typeof tempClient.loginWithPassword>>;
+  try {
+    response = await withRateLimitRetry(() => tempClient.loginWithPassword(normalizedUsername, password));
+  } catch (error: any) {
+    if (isRateLimitedError(error)) {
+      throw new Error('Too many login attempts. Please wait a moment and try again.');
+    }
+    throw error;
+  }
 
   // Re-create with full credentials + in-memory store
   client = sdk.createClient({
@@ -190,20 +238,42 @@ export async function registerWithPassword(
   const normalizedHomeserver = normalizeHomeserver(homeserver);
   const localpart = normalizeRegisterLocalpart(username).trim();
 
-  const response = await fetch(`${normalizedHomeserver}/_matrix/client/v3/register`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      username: localpart,
-      password,
-      inhibit_login: true,
-      auth: {
-        type: 'm.login.dummy',
-      },
-    }),
-  });
+  let response: Response;
+
+  try {
+    response = await withRateLimitRetry(async () => {
+      const r = await fetch(`${normalizedHomeserver}/_matrix/client/v3/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: localpart,
+          password,
+          inhibit_login: true,
+          auth: {
+            type: 'm.login.dummy',
+          },
+        }),
+      });
+
+      if (r.status === 429) {
+        const body = await r.json().catch(() => ({}));
+        throw {
+          statusCode: 429,
+          data: body,
+          message: 'Too Many Requests',
+        };
+      }
+
+      return r;
+    });
+  } catch (error: any) {
+    if (isRateLimitedError(error)) {
+      throw new Error('Too many registration attempts. Please wait a moment and try again.');
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
