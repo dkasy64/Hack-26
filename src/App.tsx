@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelList } from './components/ChannelList';
 import { ChatWindow } from './components/ChatWindow';
+import { MemberList } from './components/MemberList';
 import { LoginScreen } from './components/LoginScreen';
 import { loginWithPassword, registerWithPassword, getClient } from './lib/matrixClient';
 import type { MatrixClient, Room } from 'matrix-js-sdk';
@@ -107,6 +108,8 @@ export default function App() {
   }
 
   const activeChannels = channels.filter((c) => c.spaceId === activeSpaceId);
+  const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
+  const activeSpace = spaces.find((s) => s.id === activeSpaceId) ?? null;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#313338] text-white select-none">
@@ -132,6 +135,13 @@ export default function App() {
       <ChatWindow
         channelId={activeChannelId}
         matrixClient={matrixClient}
+      />
+
+      <MemberList
+        activeSpaceId={activeSpaceId}
+        activeChannelId={activeChannelId}
+        activeSpaceName={activeSpace?.name ?? ''}
+        activeChannelName={activeChannel?.name ?? ''}
       />
     </div>
   );

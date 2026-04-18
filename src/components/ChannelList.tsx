@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import type { Channel, Space } from '../App';
-import { createSpace, createChannel } from '../lib/matrixClient';
+import {
+  createSpace,
+  createChannel,
+  inviteUserToSpace,
+  inviteUserToChannel,
+} from '../lib/matrixClient';
 
 interface Props {
   channels: Channel[];
@@ -25,6 +30,10 @@ export function ChannelList({
   const [newSpaceName, setNewSpaceName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
+  const [spaceInviteUser, setSpaceInviteUser] = useState('');
+  const [channelInviteUser, setChannelInviteUser] = useState('');
+  const [inviteStatus, setInviteStatus] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   async function handleCreateSpace() {
     if (!newSpaceName.trim()) return;
@@ -40,6 +49,32 @@ export function ChannelList({
     onChannelCreated({ id: roomId, name: newChannelName.trim(), spaceId: activeSpaceId });
     setNewChannelName('');
     setCreatingChannel(false);
+  }
+
+  async function handleInviteToSpace() {
+    if (!activeSpaceId || !spaceInviteUser.trim()) return;
+    setInviteError(null);
+    setInviteStatus(null);
+    try {
+      await inviteUserToSpace(activeSpaceId, spaceInviteUser);
+      setInviteStatus(`Invited ${spaceInviteUser.trim()} to this space.`);
+      setSpaceInviteUser('');
+    } catch (e: any) {
+      setInviteError(e?.message ?? 'Failed to invite user to space');
+    }
+  }
+
+  async function handleInviteToChannel() {
+    if (!activeChannelId || !channelInviteUser.trim()) return;
+    setInviteError(null);
+    setInviteStatus(null);
+    try {
+      await inviteUserToChannel(activeChannelId, channelInviteUser);
+      setInviteStatus(`Invited ${channelInviteUser.trim()} to this channel.`);
+      setChannelInviteUser('');
+    } catch (e: any) {
+      setInviteError(e?.message ?? 'Failed to invite user to channel');
+    }
   }
 
   return (
@@ -81,6 +116,57 @@ export function ChannelList({
       )}
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
+        {activeSpaceId && (
+          <div className="mb-3 rounded bg-[#232428] p-2">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#949ba4]">
+              Invite to Space
+            </p>
+            <div className="flex gap-1">
+              <input
+                value={spaceInviteUser}
+                onChange={(e) => setSpaceInviteUser(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleInviteToSpace()}
+                placeholder="@user:server or username"
+                className="flex-1 rounded bg-[#1e1f22] px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button
+                onClick={handleInviteToSpace}
+                disabled={!spaceInviteUser.trim()}
+                className="rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                Invite
+              </button>
+            </div>
+
+            {activeChannelId && (
+              <>
+                <p className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wide text-[#949ba4]">
+                  Invite to Channel
+                </p>
+                <div className="flex gap-1">
+                  <input
+                    value={channelInviteUser}
+                    onChange={(e) => setChannelInviteUser(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleInviteToChannel()}
+                    placeholder="@user:server or username"
+                    className="flex-1 rounded bg-[#1e1f22] px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <button
+                    onClick={handleInviteToChannel}
+                    disabled={!channelInviteUser.trim()}
+                    className="rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    Invite
+                  </button>
+                </div>
+              </>
+            )}
+
+            {inviteError && <p className="mt-2 text-xs text-red-400">{inviteError}</p>}
+            {inviteStatus && <p className="mt-2 text-xs text-green-400">{inviteStatus}</p>}
+          </div>
+        )}
+
         <div className="mb-1 flex items-center justify-between px-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">
             Text Channels

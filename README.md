@@ -54,6 +54,16 @@ Vite starts on `http://localhost:5173` and Electron launches automatically.
 
 Choose your homeserver from the dropdown: **Default (10.111.110.222:8008)** or **Custom homeserver**. If you choose custom, enter a full URL (for example `http://localhost:8008`), then log in or choose **Create Account**.
 
+## 5. Invite Users
+
+Inside a selected space, use the **Invite to Space** box in the channel sidebar to invite users into that space.
+
+When a channel is selected, use **Invite to Channel** to invite users directly to that room.
+
+You can enter either a full Matrix user ID (for example `@alice:localhost`) or just a username.
+
+The right-hand **Members** panel shows current joined and invited members for the selected space and channel.
+
 ## Tech Stack
 
 - **Frontend:** React + Vite + Tailwind CSS

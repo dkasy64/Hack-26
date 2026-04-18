@@ -169,6 +169,78 @@ export async function createChannel(
   return result.room_id;
 }
 
+function normalizeInviteUserId(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+
+  if (trimmed.startsWith('@') && trimmed.includes(':')) {
+    return trimmed;
+  }
+
+  const c = getClient();
+  const domain = c.getDomain();
+  if (!domain) return trimmed;
+
+  const withoutAt = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
+  const localpart = withoutAt.includes(':') ? withoutAt.split(':')[0] : withoutAt;
+  return `@${localpart}:${domain}`;
+}
+
+export async function inviteUserToSpace(spaceRoomId: string, userIdOrLocalpart: string): Promise<void> {
+  const userId = normalizeInviteUserId(userIdOrLocalpart);
+  if (!userId) throw new Error('User is required');
+  await getClient().invite(spaceRoomId, userId);
+}
+
+export async function inviteUserToChannel(channelRoomId: string, userIdOrLocalpart: string): Promise<void> {
+  const userId = normalizeInviteUserId(userIdOrLocalpart);
+  if (!userId) throw new Error('User is required');
+  await getClient().invite(channelRoomId, userId);
+}
+
+export interface RoomMemberInfo {
+  userId: string;
+  displayName: string;
+  membership: 'join' | 'invite';
+}
+
+export function getRoomMembers(roomId: string): RoomMemberInfo[] {
+  const room = getClient().getRoom(roomId);
+  if (!room) return [];
+
+  return room
+    .getMembers()
+    .filter((member) => member.membership === 'join' || member.membership === 'invite')
+    .map((member) => ({
+      userId: member.userId,
+      displayName: member.name || member.userId,
+      membership: member.membership as 'join' | 'invite',
+    }))
+    .sort((a, b) => {
+      if (a.membership !== b.membership) {
+        return a.membership === 'join' ? -1 : 1;
+      }
+      return a.displayName.localeCompare(b.displayName);
+    });
+}
+
+export function onRoomMembersChanged(
+  roomId: string,
+  handler: (members: RoomMemberInfo[]) => void
+): () => void {
+  const c = getClient();
+
+  const listener = (event: sdk.MatrixEvent, room?: sdk.Room) => {
+    if (!room) return;
+    if (room.roomId !== roomId) return;
+    if (event.getType() !== 'm.room.member') return;
+    handler(getRoomMembers(roomId));
+  };
+
+  c.on(sdk.RoomEvent.Timeline, listener);
+  return () => c.off(sdk.RoomEvent.Timeline, listener);
+}
+
 // ─── Messaging ───────────────────────────────────────────────────────────────
 
 export async function sendMessage(roomId: string, body: string): Promise<void> {
