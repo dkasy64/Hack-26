@@ -122,7 +122,6 @@ export function resolveMxcAvatarUrl(mxcUrl: string | null | undefined): string |
     ? `?access_token=${encodeURIComponent(accessToken)}&allow_redirect=true`
     : '?allow_redirect=true';
 
-  // Prefer the authenticated client media endpoint for Electron image tags.
   const clientMediaUrl = `${baseUrl}/_matrix/client/v1/media/download/${server}/${mediaId}${tokenQuery}`;
   if (clientMediaUrl) return clientMediaUrl;
 
@@ -410,7 +409,6 @@ async function inviteUserToRoomIfNeeded(roomId: string, userId: string): Promise
   const c = getClient();
 
   try {
-    // Always ask the server to invite so stale local membership does not block re-invites.
     await c.invite(roomId, userId);
   } catch (error: any) {
     const errcode = String(error?.errcode ?? error?.data?.errcode ?? '');
@@ -635,8 +633,6 @@ export function getDirectMessageRooms(): DirectMessageInfo[] {
       };
     });
 
-  // Merge duplicate 1:1 DM rooms with the same peer, keeping the most recently active room.
-  // Group chats are intentionally kept separate.
   const mergedByPeer = new Map<string, (typeof rooms)[number]>();
   for (const room of rooms) {
     const key = !room.isGroup && room.peerUserId ? room.peerUserId : room.roomId;
@@ -920,6 +916,26 @@ export function onRoomMembersChanged(
 
 export async function sendMessage(roomId: string, body: string): Promise<void> {
   await getClient().sendTextMessage(roomId, body);
+}
+
+export async function sendImageMessage(roomId: string, file: File): Promise<void> {
+  const c = getClient();
+  const uploadResult = await c.uploadContent(file, { type: file.type });
+  const contentUri = typeof uploadResult === 'string'
+    ? uploadResult
+    : (uploadResult as { content_uri?: string }).content_uri;
+
+  if (!contentUri) throw new Error('Upload failed');
+
+  await c.sendMessage(roomId, {
+    msgtype: sdk.MsgType.Image,
+    body: file.name,
+    url: contentUri,
+    info: {
+      mimetype: file.type,
+      size: file.size,
+    },
+  });
 }
 
 export function onRoomMessage(

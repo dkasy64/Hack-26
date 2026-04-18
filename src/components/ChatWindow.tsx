@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
-import { sendMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile } from '../lib/matrixClient';
+import { sendMessage, sendImageMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile, resolveMxcAvatarUrl } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
 
@@ -9,6 +9,7 @@ interface Message {
   sender: string;
   body: string;
   ts: number;
+  imageUrl?: string;
 }
 
 interface Props {
@@ -123,7 +124,6 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
             version: 1,
           });
         } else {
-          // Answerer — history'de bekleyen invite var mı kontrol et
           const room = client.getRoom(roomId);
           if (room) {
             const events = [...room.getLiveTimeline().getEvents()].reverse();
@@ -167,30 +167,30 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex items-end justify-end p-4">
       <div className="pointer-events-auto w-[360px] overflow-hidden rounded-xl border border-[#404249] bg-[#1e1f22] shadow-2xl">
-      <div className="flex h-10 items-center justify-between border-b border-[#404249] bg-[#1e1f22] px-3">
-        <span className="truncate text-xs font-semibold text-white">
-          Voice / Video —{' '}
-          {status === 'waiting' && 'Waiting for others...'}
-          {status === 'connecting' && 'Connecting...'}
-          {status === 'connected' && 'Connected ✓'}
-        </span>
-        <button onClick={handleLeave} className="text-red-400 hover:text-red-300 text-xs font-semibold">
-          Leave Call
-        </button>
-      </div>
-      <div className="relative h-52 bg-[#1e1f22]">
-        <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
-        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-2 right-2 h-20 w-28 rounded-md object-cover border border-[#404249]" />
-        {status !== 'connected' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <div className="text-4xl">📹</div>
-            <p className="text-[#b5bac1] text-xs font-semibold">
-              {status === 'waiting' ? 'Waiting for others to join...' : 'Connecting...'}
-            </p>
-            <p className="text-[#6d6f78] text-[11px]">You can keep chatting while this call stays open.</p>
-          </div>
-        )}
-      </div>
+        <div className="flex h-10 items-center justify-between border-b border-[#404249] bg-[#1e1f22] px-3">
+          <span className="truncate text-xs font-semibold text-white">
+            Voice / Video —{' '}
+            {status === 'waiting' && 'Waiting for others...'}
+            {status === 'connecting' && 'Connecting...'}
+            {status === 'connected' && 'Connected ✓'}
+          </span>
+          <button onClick={handleLeave} className="text-red-400 hover:text-red-300 text-xs font-semibold">
+            Leave Call
+          </button>
+        </div>
+        <div className="relative h-52 bg-[#1e1f22]">
+          <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
+          <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-2 right-2 h-20 w-28 rounded-md object-cover border border-[#404249]" />
+          {status !== 'connected' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+              <div className="text-4xl">📹</div>
+              <p className="text-[#b5bac1] text-xs font-semibold">
+                {status === 'waiting' ? 'Waiting for others to join...' : 'Connecting...'}
+              </p>
+              <p className="text-[#6d6f78] text-[11px]">You can keep chatting while this call stays open.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -239,8 +239,10 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
   const [isInitiator, setIsInitiator] = useState(false);
   const [incomingCall, setIncomingCall] = useState<{ caller: string } | null>(null);
   const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const callOpenRef = useRef(false);
 
   useEffect(() => {
@@ -281,6 +283,20 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
     if (!draft.trim() || !channelId) return;
     await sendMessage(channelId, draft.trim());
     setDraft('');
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !channelId) return;
+    setUploading(true);
+    try {
+      await sendImageMessage(channelId, file);
+    } catch (err) {
+      console.error('Upload error:', err);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
   }
 
   if (!channelId) {
@@ -363,6 +379,21 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
             😊
           </button>
           <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*,.pdf,.doc,.docx,.txt"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="rounded bg-[#2d2f35] px-3 py-2 text-sm text-[#c7c9cc] hover:bg-[#3b3e45] disabled:opacity-50"
+          >
+            {uploading ? '⏳' : '📎'}
+          </button>
+          <input
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -401,16 +432,25 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
 }
 
 function eventToMessage(event: MatrixEvent): Message {
+  const content = event.getContent();
+  let imageUrl: string | undefined;
+
+  if (content.msgtype === 'm.image' && content.url) {
+    try {
+      imageUrl = resolveMxcAvatarUrl(content.url) ?? undefined;
+    } catch {}
+  }
+
   return {
     eventId: event.getId() ?? Math.random().toString(),
     sender: event.getSender() ?? 'unknown',
-    body: event.getContent().body ?? '',
+    body: content.body ?? '',
     ts: event.getTs(),
+    imageUrl,
   };
 }
 
 function MessageRow({ message, myUserId, onClickUsername }: { message: Message; myUserId: string; onClickUsername: (userId: string) => void }) {
-  const isMe = message.sender === myUserId;
   const profile = getUserProfile(message.sender);
   const fallbackDisplayName = message.sender.split(':')[0].replace('@', '');
   const displayName = profile.displayName || fallbackDisplayName;
@@ -435,7 +475,16 @@ function MessageRow({ message, myUserId, onClickUsername }: { message: Message; 
           </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
         </div>
-        <p className="text-sm text-[#dcddde]">{message.body}</p>
+        {message.imageUrl ? (
+          <img
+            src={message.imageUrl}
+            alt={message.body}
+            className="mt-1 max-w-xs rounded-lg object-cover cursor-pointer"
+            onClick={() => window.open(message.imageUrl, '_blank')}
+          />
+        ) : (
+          <p className="text-sm text-[#dcddde]">{message.body}</p>
+        )}
       </div>
     </div>
   );
