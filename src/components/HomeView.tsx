@@ -25,6 +25,7 @@ import {
 } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
+import { useTheme } from './ThemeProvider';
 
 interface Message {
   eventId: string;
@@ -66,6 +67,7 @@ export function HomeView({
   const [isBusy, setIsBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     const loadInvites = () => setPendingInvites(getPendingInvites());
@@ -236,7 +238,7 @@ export function HomeView({
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <aside className="flex w-72 flex-col border-r border-[#1e1f22] bg-[#2b2d31]">
+      <aside className="flex w-72 flex-col border-r" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-secondary)' }}>
         <div className="border-b border-[#1e1f22] p-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Add Friend</p>
           <div className="flex gap-1">
@@ -245,7 +247,8 @@ export function HomeView({
               onChange={(e) => setFriendInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAddFriendAndDm()}
               placeholder="@user:server or username"
-              className="flex-1 rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+              className="flex-1 rounded px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+              style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             />
             <button
               onClick={handleAddFriendAndDm}
@@ -312,6 +315,18 @@ export function HomeView({
           )}
         </div>
 
+        <div className="border-t border-[#1e1f22] p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Theme</span>
+            <button
+              onClick={toggleTheme}
+              className="rounded bg-[#1e1f22] px-3 py-1 text-xs text-white hover:bg-[#35373c]"
+            >
+              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            </button>
+          </div>
+        </div>
+
         <button
           onClick={onOpenProfile}
           className="flex h-14 w-full items-center gap-2 border-t border-[#1e1f22] bg-[#232428] px-3 transition hover:bg-[#2f3136]"
@@ -330,9 +345,9 @@ export function HomeView({
         </button>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col bg-[#313338]">
+      <main className="flex min-w-0 flex-1 flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
         <div className="flex h-12 items-center border-b border-[#1e1f22] px-4">
-          <span className="text-sm font-semibold text-white">{activeDm ? activeDm.name : 'Home'}</span>
+          <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{activeDm ? activeDm.name : 'Home'}</span>
         </div>
 
         {(status || error) && (
@@ -375,7 +390,7 @@ export function HomeView({
             </div>
 
             <div className="px-4 pb-6 pt-2">
-              <div className="relative flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
+              <div className="relative flex items-center gap-2 rounded-lg px-4 py-2.5" style={{ backgroundColor: 'var(--bg-input)' }}>
                 {showEmojiPicker && (
                   <div className="absolute left-4 bottom-full z-10">
                     <EmojiPicker
@@ -400,7 +415,8 @@ export function HomeView({
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                   placeholder="Send a direct message"
-                  className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[#6d6f78]"
+                  className="flex-1 bg-transparent text-sm outline-none"
+                  style={{ color: 'var(--text-primary)' }}
                 />
                 <button
                   onClick={handleSend}

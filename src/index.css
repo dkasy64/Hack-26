@@ -7,3 +7,40 @@
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Theme variables */
+:root {
+  --bg-primary: #313338;
+  --bg-secondary: #2b2d31;
+  --bg-tertiary: #1e1f22;
+  --bg-accent: #404249;
+  --bg-input: #383a40;
+  --text-primary: #ffffff;
+  --text-secondary: #b5bac1;
+  --text-muted: #6d6f78;
+  --border: #1e1f22;
+}
+
+.dark {
+  --bg-primary: #313338;
+  --bg-secondary: #2b2d31;
+  --bg-tertiary: #1e1f22;
+  --bg-accent: #404249;
+  --bg-input: #383a40;
+  --text-primary: #ffffff;
+  --text-secondary: #b5bac1;
+  --text-muted: #6d6f78;
+  --border: #1e1f22;
+}
+
+.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #e9ecef;
+  --bg-accent: #dee2e6;
+  --bg-input: #f1f3f4;
+  --text-primary: #212529;
+  --text-secondary: #6c757d;
+  --text-muted: #868e96;
+  --border: #dee2e6;
+}
