@@ -86,9 +86,13 @@ function MemberSection({ title, members }: { title: string; members: RoomMemberI
             return (
               <li key={`${member.membership}-${member.userId}`} className="flex items-center justify-between rounded bg-[#232428] px-2 py-1.5">
                 <div className="flex min-w-0 items-center gap-2">
-                  <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">
-                    {shortName.slice(0, 2).toUpperCase()}
-                  </div>
+                  {member.avatarUrl ? (
+                    <img src={member.avatarUrl} alt={`${shortName} avatar`} className="h-6 w-6 flex-shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">
+                      {shortName.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
                   <span className="truncate text-xs text-white">{shortName}</span>
                 </div>
                 <span

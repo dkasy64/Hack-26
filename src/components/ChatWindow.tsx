@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
-import { sendMessage, onRoomMessage, getRoomHistory, getClient } from '../lib/matrixClient';
+import { sendMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
 
@@ -199,13 +199,19 @@ function IncomingCallBanner({ caller, onAccept, onReject }: {
   onAccept: () => void;
   onReject: () => void;
 }) {
-  const displayName = caller.split(':')[0].replace('@', '');
+  const profile = getUserProfile(caller);
+  const fallbackDisplayName = caller.split(':')[0].replace('@', '');
+  const displayName = profile.displayName || fallbackDisplayName;
   return (
     <div className="absolute top-14 left-0 right-0 z-20 mx-4 flex items-center justify-between rounded-lg bg-[#248046] px-4 py-3 shadow-lg">
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
-          {displayName.slice(0, 2).toUpperCase()}
-        </div>
+        {profile.avatarUrl ? (
+          <img src={profile.avatarUrl} alt={`${displayName} avatar`} className="h-8 w-8 rounded-full object-cover" />
+        ) : (
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
+            {displayName.slice(0, 2).toUpperCase()}
+          </div>
+        )}
         <div>
           <p className="text-sm font-semibold text-white">{displayName} is calling...</p>
           <p className="text-xs text-white/70">Incoming video call</p>
@@ -403,14 +409,20 @@ function eventToMessage(event: MatrixEvent): Message {
 
 function MessageRow({ message, myUserId, onClickUsername }: { message: Message; myUserId: string; onClickUsername: (userId: string) => void }) {
   const isMe = message.sender === myUserId;
-  const displayName = message.sender.split(':')[0].replace('@', '');
+  const profile = getUserProfile(message.sender);
+  const fallbackDisplayName = message.sender.split(':')[0].replace('@', '');
+  const displayName = profile.displayName || fallbackDisplayName;
   const time = new Date(message.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className="group flex items-start gap-3">
-      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
-        {displayName.slice(0, 2).toUpperCase()}
-      </div>
+      {profile.avatarUrl ? (
+        <img src={profile.avatarUrl} alt={`${displayName} avatar`} className="h-10 w-10 flex-shrink-0 rounded-full object-cover" />
+      ) : (
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
+          {displayName.slice(0, 2).toUpperCase()}
+        </div>
+      )}
       <div>
         <div className="flex items-baseline gap-2">
           <button

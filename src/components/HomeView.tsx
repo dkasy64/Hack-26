@@ -6,17 +6,24 @@ import {
   createGroupDirectMessage,
   getBio,
   getDirectMessageRooms,
+  getRoomMembers,
+  getRoomMembershipEvents,
   getPendingInvites,
   getRoomHistory,
+  inviteUserToRoom,
   leaveRoom,
   onDirectMessagesChanged,
   onPendingInvitesChanged,
+  onRoomMembersChanged,
+  onRoomMembershipEvent,
   onRoomMessage,
   resolveMxcAvatarUrl,
   sendMessage,
   setBio,
   type DirectMessageInfo,
   type PendingInviteInfo,
+  type RoomMemberInfo,
+  type RoomMembershipEventInfo,
 } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
@@ -50,6 +57,9 @@ export function HomeView({
   const [directMessages, setDirectMessages] = useState<DirectMessageInfo[]>([]);
   const [activeDmRoomId, setActiveDmRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [participants, setParticipants] = useState<RoomMemberInfo[]>([]);
+  const [membershipEvents, setMembershipEvents] = useState<RoomMembershipEventInfo[]>([]);
+  const [groupInviteInput, setGroupInviteInput] = useState('');
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [bio, setBioState] = useState('');
@@ -90,6 +100,34 @@ export function HomeView({
 
     return unsub;
   }, [activeDmRoomId]);
+
+  useEffect(() => {
+    if (!activeDmRoomId) {
+      setParticipants([]);
+      setMembershipEvents([]);
+      return;
+    }
+
+    setParticipants(getRoomMembers(activeDmRoomId));
+    setMembershipEvents(getRoomMembershipEvents(activeDmRoomId));
+
+    const unsubMembers = onRoomMembersChanged(activeDmRoomId, setParticipants);
+    const unsubMembershipEvents = onRoomMembershipEvent(activeDmRoomId, (event) => {
+      setMembershipEvents((prev) => {
+        if (prev.some((e) => e.eventId === event.eventId)) return prev;
+        return [...prev, event].slice(-25);
+      });
+    });
+
+    return () => {
+      unsubMembers();
+      unsubMembershipEvents();
+    };
+  }, [activeDmRoomId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   useEffect(() => {
     const loadBio = async () => {
@@ -195,6 +233,24 @@ export function HomeView({
       setStatus('Left chat.');
     } catch (e: any) {
       setError(e?.message ?? 'Failed to leave chat');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleInviteToActiveGroupDm() {
+    if (!activeDmRoomId || !groupInviteInput.trim()) return;
+
+    setError(null);
+    setStatus(null);
+    setIsBusy(true);
+
+    try {
+      await inviteUserToRoom(activeDmRoomId, groupInviteInput.trim());
+      setGroupInviteInput('');
+      setStatus('Invitation sent.');
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to invite user to group chat');
     } finally {
       setIsBusy(false);
     }
@@ -316,7 +372,7 @@ export function HomeView({
         </button>
       </aside>
 
-      <main className="flex flex-1 flex-col bg-[#313338]">
+      <main className="flex min-w-0 flex-1 flex-col bg-[#313338]">
         <div className="flex h-12 items-center border-b border-[#1e1f22] px-4">
           <span className="text-sm font-semibold text-white">{activeDm ? activeDm.name : 'Home'}</span>
         </div>
@@ -400,6 +456,67 @@ export function HomeView({
           </>
         )}
       </main>
+
+      {activeDm?.isGroup && activeDmRoomId && (
+        <aside className="flex w-64 flex-col border-l border-[#1e1f22] bg-[#2b2d31]">
+          <div className="flex h-12 items-center border-b border-[#1e1f22] px-4">
+            <span className="text-sm font-semibold text-white">Group Members</span>
+          </div>
+
+          <div className="border-b border-[#1e1f22] p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Invite Member</p>
+            <div className="flex gap-2">
+              <input
+                value={groupInviteInput}
+                onChange={(e) => setGroupInviteInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleInviteToActiveGroupDm()}
+                placeholder="@user:server"
+                className="flex-1 rounded bg-[#1e1f22] px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button
+                onClick={handleInviteToActiveGroupDm}
+                disabled={isBusy || !groupInviteInput.trim()}
+                className="rounded bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">
+              Members ({participants.length})
+            </p>
+            {participants.length === 0 ? (
+              <p className="text-xs text-[#6d6f78]">No visible members.</p>
+            ) : (
+              <div className="space-y-1">
+                {participants.map((participant) => (
+                  <div key={participant.userId} className="rounded bg-[#232428] px-2 py-1.5">
+                    <p className="truncate text-xs font-semibold text-white">{participant.displayName}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-[#949ba4]">{participant.membership}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[#949ba4]">Recent Activity</p>
+            {membershipEvents.length === 0 ? (
+              <p className="text-xs text-[#6d6f78]">No recent join/leave activity.</p>
+            ) : (
+              <div className="space-y-1">
+                {membershipEvents.slice(-8).map((event) => (
+                  <p key={event.eventId} className="rounded bg-[#232428] px-2 py-1.5 text-xs text-[#b5bac1]">
+                    <span className="font-semibold text-white">{event.displayName}</span>{' '}
+                    {event.membership === 'join' ? 'joined' : 'left'}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
+
       {profileModalUserId && (
         <ProfileModal userId={profileModalUserId} onClose={() => setProfileModalUserId(null)} />
       )}

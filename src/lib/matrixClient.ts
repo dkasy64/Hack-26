@@ -96,6 +96,13 @@ export interface CurrentUserProfile {
   avatarUrl: string | null;
 }
 
+export interface UserProfileInfo {
+  userId: string;
+  displayName: string;
+  avatarMxcUrl: string | null;
+  avatarUrl: string | null;
+}
+
 export function resolveMxcAvatarUrl(mxcUrl: string | null | undefined): string | null {
   if (!mxcUrl) return null;
 
@@ -142,6 +149,21 @@ export function getCurrentUserProfile(): CurrentUserProfile {
   const userId = c.getUserId();
   if (!userId) throw new Error('User session not available');
 
+  const user = c.getUser(userId);
+  const displayName = user?.displayName || localpartFromUserId(userId);
+  const avatarMxcUrl = user?.avatarUrl ?? null;
+  const avatarUrl = resolveMxcAvatarUrl(avatarMxcUrl);
+
+  return {
+    userId,
+    displayName,
+    avatarMxcUrl,
+    avatarUrl,
+  };
+}
+
+export function getUserProfile(userId: string): UserProfileInfo {
+  const c = getClient();
   const user = c.getUser(userId);
   const displayName = user?.displayName || localpartFromUserId(userId);
   const avatarMxcUrl = user?.avatarUrl ?? null;
@@ -386,14 +408,25 @@ function getChannelsInSpace(spaceRoomId: string): sdk.Room[] {
 
 async function inviteUserToRoomIfNeeded(roomId: string, userId: string): Promise<void> {
   const c = getClient();
-  const room = c.getRoom(roomId);
-  const membership = room?.getMember(userId)?.membership;
 
-  if (membership === 'join' || membership === 'invite') {
-    return;
+  try {
+    // Always ask the server to invite so stale local membership does not block re-invites.
+    await c.invite(roomId, userId);
+  } catch (error: any) {
+    const errcode = String(error?.errcode ?? error?.data?.errcode ?? '');
+    const message = String(error?.message ?? '').toLowerCase();
+
+    const alreadyInRoom = errcode === 'M_FORBIDDEN' && (
+      message.includes('already in') || message.includes('is in the room')
+    );
+    const alreadyInvited = errcode === 'M_BAD_STATE' || message.includes('already invited');
+
+    if (alreadyInRoom || alreadyInvited) {
+      return;
+    }
+
+    throw error;
   }
-
-  await c.invite(roomId, userId);
 }
 
 async function inviteSpaceMembersToRoom(spaceRoomId: string, targetRoomId: string): Promise<void> {
@@ -446,6 +479,12 @@ export async function inviteUserToChannel(channelRoomId: string, userIdOrLocalpa
   const userId = normalizeInviteUserId(userIdOrLocalpart);
   if (!userId) throw new Error('User is required');
   await getClient().invite(channelRoomId, userId);
+}
+
+export async function inviteUserToRoom(roomId: string, userIdOrLocalpart: string): Promise<void> {
+  const userId = normalizeInviteUserId(userIdOrLocalpart);
+  if (!userId) throw new Error('User is required');
+  await inviteUserToRoomIfNeeded(roomId, userId);
 }
 
 export interface DirectMessageInfo {
@@ -710,6 +749,68 @@ export interface RoomMemberInfo {
   userId: string;
   displayName: string;
   membership: 'join' | 'invite';
+  avatarUrl: string | null;
+}
+
+export interface RoomMembershipEventInfo {
+  eventId: string;
+  userId: string;
+  displayName: string;
+  membership: 'join' | 'leave';
+  ts: number;
+}
+
+function toRoomMembershipEventInfo(room: sdk.Room, event: sdk.MatrixEvent): RoomMembershipEventInfo | null {
+  if (event.getType() !== 'm.room.member') return null;
+
+  const content = event.getContent() as { membership?: string };
+  const membership = content.membership;
+  if (membership !== 'join' && membership !== 'leave') return null;
+
+  const userId = event.getStateKey() || event.getSender() || '';
+  if (!userId) return null;
+
+  const member = room.getMember(userId);
+  const fallbackName = userId.replace(/^@/, '').split(':')[0] || userId;
+
+  return {
+    eventId: event.getId() ?? `${event.getTs()}-${userId}-${membership}`,
+    userId,
+    displayName: member?.name || getClient().getUser(userId)?.displayName || fallbackName,
+    membership,
+    ts: event.getTs(),
+  };
+}
+
+export function getRoomMembershipEvents(roomId: string, limit = 25): RoomMembershipEventInfo[] {
+  const room = getClient().getRoom(roomId);
+  if (!room) return [];
+
+  return room
+    .getLiveTimeline()
+    .getEvents()
+    .map((event) => toRoomMembershipEventInfo(room, event))
+    .filter((event): event is RoomMembershipEventInfo => Boolean(event))
+    .slice(-limit);
+}
+
+export function onRoomMembershipEvent(
+  roomId: string,
+  handler: (event: RoomMembershipEventInfo) => void
+): () => void {
+  const c = getClient();
+
+  const listener = (event: sdk.MatrixEvent, room?: sdk.Room) => {
+    if (!room) return;
+    if (room.roomId !== roomId) return;
+
+    const mapped = toRoomMembershipEventInfo(room, event);
+    if (!mapped) return;
+    handler(mapped);
+  };
+
+  c.on(sdk.RoomEvent.Timeline, listener);
+  return () => c.off(sdk.RoomEvent.Timeline, listener);
 }
 
 export interface PendingInviteInfo {
@@ -774,11 +875,16 @@ export function getRoomMembers(roomId: string): RoomMemberInfo[] {
   return room
     .getMembers()
     .filter((member) => member.membership === 'join' || member.membership === 'invite')
-    .map((member) => ({
-      userId: member.userId,
-      displayName: member.name || member.userId,
-      membership: member.membership as 'join' | 'invite',
-    }))
+    .map((member) => {
+      const avatarMxcUrl = member.getMxcAvatarUrl() || getClient().getUser(member.userId)?.avatarUrl || null;
+
+      return {
+        userId: member.userId,
+        displayName: member.name || member.userId,
+        membership: member.membership as 'join' | 'invite',
+        avatarUrl: resolveMxcAvatarUrl(avatarMxcUrl),
+      };
+    })
     .sort((a, b) => {
       if (a.membership !== b.membership) {
         return a.membership === 'join' ? -1 : 1;
@@ -793,6 +899,8 @@ export function onRoomMembersChanged(
 ): () => void {
   const c = getClient();
 
+  const syncListener = () => handler(getRoomMembers(roomId));
+
   const listener = (event: sdk.MatrixEvent, room?: sdk.Room) => {
     if (!room) return;
     if (room.roomId !== roomId) return;
@@ -800,8 +908,12 @@ export function onRoomMembersChanged(
     handler(getRoomMembers(roomId));
   };
 
+  c.on('sync' as any, syncListener);
   c.on(sdk.RoomEvent.Timeline, listener);
-  return () => c.off(sdk.RoomEvent.Timeline, listener);
+  return () => {
+    c.off('sync' as any, syncListener);
+    c.off(sdk.RoomEvent.Timeline, listener);
+  };
 }
 
 // ─── Messaging ───────────────────────────────────────────────────────────────
