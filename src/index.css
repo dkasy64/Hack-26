@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Electron window drag region — only element with this class is draggable */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
