@@ -34,6 +34,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
     pcRef.current = pc;
 
     pc.ontrack = (e) => {
+      console.log('Remote track received:', e.streams);
       if (remoteVideoRef.current && e.streams[0]) {
         remoteVideoRef.current.srcObject = e.streams[0];
         setStatus('connected');
@@ -51,6 +52,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
     };
 
     pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState);
       if (pc.connectionState === 'connected') setStatus('connected');
       if (pc.connectionState === 'failed') setStatus('connecting');
     };
@@ -132,7 +134,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
       localStream?.getTracks().forEach((t) => t.stop());
       pc.close();
     };
-  }, [roomId, isInitiator]); // onClose intentionally omitted to avoid re-mount
+  }, [roomId, onClose, isInitiator]);
 
   function handleLeave() {
     getClient().sendEvent(roomId, 'm.call.hangup' as any, { call_id: roomId, version: 1 });
@@ -153,8 +155,19 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         </button>
       </div>
       <div className="relative flex-1 bg-[#1e1f22]">
-        <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
-        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]" />
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className="h-full w-full object-cover"
+        />
+        <video
+          ref={localVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]"
+        />
         {status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <div className="text-4xl">📹</div>
@@ -208,7 +221,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
   const callOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!channelId) return;
+    if (!channelId) return undefined;
     const client = getClient();
     const myId = client.getUserId();
 
@@ -221,7 +234,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
     };
 
     client.on('Room.timeline' as any, handleIncoming);
-    return () => client.off('Room.timeline' as any, handleIncoming);
+    return () => { client.off('Room.timeline' as any, handleIncoming); };
   }, [channelId]);
 
   useEffect(() => {
@@ -268,7 +281,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         </div>
         <button
           onClick={() => {
-            callOpenRef.current = true;
             setIsInitiator(true);
             setCallOpen(true);
           }}
@@ -287,7 +299,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           onAccept={() => {
             setIncomingCall(null);
             setIsInitiator(false);
-            callOpenRef.current = true;
             setCallOpen(true);
           }}
           onReject={() => {
@@ -331,7 +342,6 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         <VideoCall
           roomId={channelId}
           onClose={() => {
-            callOpenRef.current = false;
             setCallOpen(false);
             setIsInitiator(false);
           }}
