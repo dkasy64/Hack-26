@@ -50,6 +50,110 @@ export function getClient(): sdk.MatrixClient {
   return client;
 }
 
+export interface CurrentUserProfile {
+  userId: string;
+  displayName: string;
+  avatarMxcUrl: string | null;
+  avatarUrl: string | null;
+}
+
+function localpartFromUserId(userId: string): string {
+  return userId.replace(/^@/, '').split(':')[0] || 'You';
+}
+
+export function getCurrentUserProfile(): CurrentUserProfile {
+  const c = getClient();
+  const userId = c.getUserId();
+  if (!userId) throw new Error('User session not available');
+
+  const user = c.getUser(userId);
+  const displayName = user?.displayName || localpartFromUserId(userId);
+  const avatarMxcUrl = user?.avatarUrl ?? null;
+  const avatarUrl = avatarMxcUrl ? c.mxcUrlToHttp(avatarMxcUrl) ?? null : null;
+
+  return {
+    userId,
+    displayName,
+    avatarMxcUrl,
+    avatarUrl,
+  };
+}
+
+export async function updateCurrentUserProfile(options: {
+  displayName: string;
+  avatarFile?: File | null;
+}): Promise<CurrentUserProfile> {
+  const c = getClient();
+  const userId = c.getUserId();
+  if (!userId) throw new Error('User session not available');
+
+  const trimmedDisplayName = options.displayName.trim();
+  if (!trimmedDisplayName) {
+    throw new Error('Display name is required');
+  }
+
+  await c.setDisplayName(trimmedDisplayName);
+
+  if (options.avatarFile) {
+    const uploadResult = await c.uploadContent(options.avatarFile);
+    const contentUri = typeof uploadResult === 'string'
+      ? uploadResult
+      : (uploadResult as { content_uri?: string }).content_uri;
+
+    if (!contentUri) {
+      throw new Error('Avatar upload failed');
+    }
+
+    await c.setAvatarUrl(contentUri);
+  }
+
+  const refreshed = await c.getProfileInfo(userId).catch(() => null as {
+    displayname?: string;
+    avatar_url?: string;
+  } | null);
+
+  const avatarMxcUrl = refreshed?.avatar_url ?? c.getUser(userId)?.avatarUrl ?? null;
+  const avatarUrl = avatarMxcUrl ? c.mxcUrlToHttp(avatarMxcUrl) ?? null : null;
+
+  return {
+    userId,
+    displayName: refreshed?.displayname ?? trimmedDisplayName,
+    avatarMxcUrl,
+    avatarUrl,
+  };
+}
+
+export function onCurrentUserProfileChanged(
+  handler: (profile: CurrentUserProfile) => void
+): () => void {
+  const c = getClient();
+  const userId = c.getUserId();
+  if (!userId) return () => {};
+
+  const emit = () => {
+    try {
+      handler(getCurrentUserProfile());
+    } catch {
+      // Ignore transient profile read errors.
+    }
+  };
+
+  const syncListener = () => emit();
+  const timelineListener = (event: sdk.MatrixEvent) => {
+    if (event.getType() !== 'm.room.member') return;
+    if (event.getStateKey() !== userId) return;
+    emit();
+  };
+
+  c.on('sync' as any, syncListener);
+  c.on(sdk.RoomEvent.Timeline, timelineListener);
+
+  return () => {
+    c.off('sync' as any, syncListener);
+    c.off(sdk.RoomEvent.Timeline, timelineListener);
+  };
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export async function loginWithPassword(
