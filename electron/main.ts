@@ -1,7 +1,11 @@
 import { app, BrowserWindow, shell } from 'electron';
-import path from 'path';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const isDev = process.env.NODE_ENV === 'development';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const isDev = !app.isPackaged;
 const VITE_DEV_URL = 'http://localhost:5173';
 
 function createWindow() {

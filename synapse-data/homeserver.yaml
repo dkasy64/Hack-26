@@ -28,6 +28,8 @@ database:
 log_config: "/data/localhost.log.config"
 media_store_path: /data/media_store
 registration_shared_secret: "p.wl,ege*7;I*qb~*bbq+sUn6tK@PXM~2YNozZZ_uln=SX,Bxl"
+enable_registration: true
+enable_registration_without_verification: true
 report_stats: false
 macaroon_secret_key: "J*d.KFAY*19VO7ut@O-srDuTHR.C1~n8Nxx_+.QuU:I-97-k:0"
 form_secret: "AaTqS^Bet#Fcz@v7Mcl+.tTbFht&H4B^jc0XMYlRG+NQ+_cn_#"

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "electron-dist/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "concurrently \"tsc -p tsconfig.electron.json --watch\" \"vite\" \"wait-on http://localhost:5173 file:./electron-dist/main.js && electron .\"",
     "build": "tsc && vite build",
     "electron:build": "tsc -p tsconfig.electron.json && electron-builder",
     "preview": "vite preview"

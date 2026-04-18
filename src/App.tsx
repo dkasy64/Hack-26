@@ -1,22 +1,23 @@
-/**
- * TEAMMATE A — Root Layout (Discord Clone Shell)
- *
- * Layout:  [ServerSidebar 72px] | [ChannelList 240px] | [ChatWindow flex-1]
- *
- * State lives here and is passed down as props — no context needed for the
- * 5-hour sprint. MatrixClient is initialized once in useEffect on login.
- */
-
 import { useState, useEffect } from 'react';
 import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelList } from './components/ChannelList';
 import { ChatWindow } from './components/ChatWindow';
+import { MemberList } from './components/MemberList';
+import { HomeView } from './components/HomeView';
+import { ProfileEditorModal } from './components/ProfileEditorModal';
 import { LoginScreen } from './components/LoginScreen';
-import { loginWithPassword, getClient } from './lib/matrixClient';
+import {
+  loginWithPassword,
+  registerWithPassword,
+  getClient,
+  getCurrentUserProfile,
+  onCurrentUserProfileChanged,
+  type CurrentUserProfile,
+} from './lib/matrixClient';
 import type { MatrixClient, Room } from 'matrix-js-sdk';
 
 export interface Space {
-  id: string;   // Matrix roomId
+  id: string;
   name: string;
   emoji?: string;
 }
@@ -31,17 +32,19 @@ export default function App() {
   const [matrixClient, setMatrixClient] = useState<MatrixClient | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [isHomeActive, setIsHomeActive] = useState(true);
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState<CurrentUserProfile | null>(null);
 
-  // ── Login ──────────────────────────────────────────────────────────────────
-  async function handleLogin(username: string, password: string) {
+  async function handleLogin(username: string, password: string, homeserver: string) {
     setIsLoading(true);
     setError(null);
     try {
-      const c = await loginWithPassword(username, password);
+      const c = await loginWithPassword(username, password, homeserver);
       setMatrixClient(c);
     } catch (e: any) {
       setError(e?.message ?? 'Login failed');
@@ -50,7 +53,19 @@ export default function App() {
     }
   }
 
-  // ── Sync rooms after client ready ──────────────────────────────────────────
+  async function handleRegister(username: string, password: string, homeserver: string) {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const c = await registerWithPassword(username, password, homeserver);
+      setMatrixClient(c);
+    } catch (e: any) {
+      setError(e?.message ?? 'Registration failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!matrixClient) return;
 
@@ -58,7 +73,6 @@ export default function App() {
       const client = getClient();
       const allRooms: Room[] = client.getRooms();
 
-      // Spaces = rooms with 'm.space' creation_content type
       const spaceRooms = allRooms.filter(
         (r) => r.currentState.getStateEvents('m.room.create', '')
           ?.getContent()?.type === 'm.space'
@@ -71,30 +85,47 @@ export default function App() {
         }))
       );
 
-      // Channels = all non-space rooms
       const channelRooms = allRooms.filter(
         (r) => r.currentState.getStateEvents('m.room.create', '')
           ?.getContent()?.type !== 'm.space'
       );
 
       setChannels(
-        channelRooms.map((r) => ({
-          id: r.roomId,
-          name: r.name,
-          spaceId: '',  // Teammate B: wire up space.child events here
-        }))
+        channelRooms.map((r) => {
+          const parentSpace = spaceRooms.find((s) =>
+            s.currentState.getStateEvents('m.space.child', r.roomId) != null
+          );
+          return {
+            id: r.roomId,
+            name: r.name,
+            spaceId: parentSpace?.roomId ?? '',
+          };
+        })
       );
     }
 
-    matrixClient.once('sync' as any, syncRooms);
+    syncRooms();
+    matrixClient.on('sync' as any, syncRooms);
     return () => { matrixClient.off('sync' as any, syncRooms); };
   }, [matrixClient]);
 
-  // ── Not logged in ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!matrixClient) return;
+
+    try {
+      setCurrentUserProfile(getCurrentUserProfile());
+    } catch {
+      // Ignore initial profile read failures until sync settles.
+    }
+
+    return onCurrentUserProfileChanged(setCurrentUserProfile);
+  }, [matrixClient]);
+
   if (!matrixClient) {
     return (
       <LoginScreen
         onLogin={handleLogin}
+        onRegister={handleRegister}
         isLoading={isLoading}
         error={error}
       />
@@ -102,34 +133,77 @@ export default function App() {
   }
 
   const activeChannels = channels.filter((c) => c.spaceId === activeSpaceId);
+  const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
+  const activeSpace = spaces.find((s) => s.id === activeSpaceId) ?? null;
+  const fallbackUserId = matrixClient.getUserId() ?? '@you:unknown';
+  const profile = currentUserProfile ?? {
+    userId: fallbackUserId,
+    displayName: fallbackUserId.replace(/^@/, '').split(':')[0] || 'You',
+    avatarMxcUrl: null,
+    avatarUrl: null,
+  };
 
-  // ── Main Layout ────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#313338] text-white select-none">
-      {/* Col 1 — Server/Space icons */}
       <ServerSidebar
         spaces={spaces}
         activeSpaceId={activeSpaceId}
+        isHomeActive={isHomeActive}
+        onSelectHome={() => {
+          setIsHomeActive(true);
+          setActiveSpaceId(null);
+          setActiveChannelId(null);
+        }}
         onSelectSpace={(id) => {
+          setIsHomeActive(false);
           setActiveSpaceId(id);
           setActiveChannelId(null);
         }}
       />
 
-      {/* Col 2 — Channel list for active space */}
-      <ChannelList
-        channels={activeChannels}
-        activeChannelId={activeChannelId}
-        spaceName={spaces.find((s) => s.id === activeSpaceId)?.name ?? ''}
-        onSelectChannel={setActiveChannelId}
-        activeSpaceId={activeSpaceId}
-        onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
-      />
+      {isHomeActive ? (
+        <HomeView
+          matrixClient={matrixClient}
+          currentUserDisplayName={profile.displayName}
+          currentUserAvatarUrl={profile.avatarUrl}
+          currentUserTag={profile.userId}
+          onOpenProfile={() => setIsProfileEditorOpen(true)}
+        />
+      ) : (
+        <>
+          <ChannelList
+            channels={activeChannels}
+            activeChannelId={activeChannelId}
+            spaceName={spaces.find((s) => s.id === activeSpaceId)?.name ?? ''}
+            currentUserDisplayName={profile.displayName}
+            currentUserAvatarUrl={profile.avatarUrl}
+            currentUserTag={profile.userId}
+            onOpenProfile={() => setIsProfileEditorOpen(true)}
+            onSelectChannel={setActiveChannelId}
+            activeSpaceId={activeSpaceId}
+            onSpaceCreated={(space) => setSpaces((prev) => [...prev, space])}
+            onChannelCreated={(channel) => setChannels((prev) => [...prev, channel])}
+          />
 
-      {/* Col 3 — Chat + optional Jitsi */}
-      <ChatWindow
-        channelId={activeChannelId}
-        matrixClient={matrixClient}
+          <ChatWindow
+            channelId={activeChannelId}
+            matrixClient={matrixClient}
+          />
+
+          <MemberList
+            activeSpaceId={activeSpaceId}
+            activeChannelId={activeChannelId}
+            activeSpaceName={activeSpace?.name ?? ''}
+            activeChannelName={activeChannel?.name ?? ''}
+          />
+        </>
+      )}
+
+      <ProfileEditorModal
+        isOpen={isProfileEditorOpen}
+        profile={profile}
+        onClose={() => setIsProfileEditorOpen(false)}
+        onSaved={setCurrentUserProfile}
       />
     </div>
   );
