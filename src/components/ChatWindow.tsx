@@ -17,8 +17,8 @@ interface Props {
 function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: () => void; isInitiator: boolean }) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const isInitiatorRef = useRef(isInitiator);
   const [status, setStatus] = useState<'waiting' | 'connecting' | 'connected'>('waiting');
 
   useEffect(() => {
@@ -31,10 +31,8 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         { urls: 'stun:stun1.l.google.com:19302' },
       ],
     });
-    pcRef.current = pc;
 
     pc.ontrack = (e) => {
-      console.log('Remote track received:', e.streams);
       if (remoteVideoRef.current && e.streams[0]) {
         remoteVideoRef.current.srcObject = e.streams[0];
         setStatus('connected');
@@ -52,7 +50,6 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
     };
 
     pc.onconnectionstatechange = () => {
-      console.log('Connection state:', pc.connectionState);
       if (pc.connectionState === 'connected') setStatus('connected');
       if (pc.connectionState === 'failed') setStatus('connecting');
     };
@@ -71,7 +68,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
       const myId = client.getUserId();
       if (event.getSender() === myId) return;
 
-      if (type === 'm.call.invite' && !isInitiator) {
+      if (type === 'm.call.invite' && !isInitiatorRef.current) {
         setStatus('connecting');
         await pc.setRemoteDescription(new RTCSessionDescription(content.offer));
         await applyPendingCandidates();
@@ -84,7 +81,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         });
       }
 
-      if (type === 'm.call.answer' && isInitiator) {
+      if (type === 'm.call.answer' && isInitiatorRef.current) {
         await pc.setRemoteDescription(new RTCSessionDescription(content.answer));
         await applyPendingCandidates();
         setStatus('connecting');
@@ -111,7 +108,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
         localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
 
-        if (isInitiator) {
+        if (isInitiatorRef.current) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           setStatus('connecting');
@@ -134,7 +131,7 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
       localStream?.getTracks().forEach((t) => t.stop());
       pc.close();
     };
-  }, [roomId, onClose, isInitiator]);
+  }, [roomId]);
 
   function handleLeave() {
     getClient().sendEvent(roomId, 'm.call.hangup' as any, { call_id: roomId, version: 1 });
@@ -155,19 +152,8 @@ function VideoCall({ roomId, onClose, isInitiator }: { roomId: string; onClose: 
         </button>
       </div>
       <div className="relative flex-1 bg-[#1e1f22]">
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className="h-full w-full object-cover"
-        />
-        <video
-          ref={localVideoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]"
-        />
+        <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
+        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-4 right-4 h-32 w-48 rounded-lg object-cover border-2 border-[#404249]" />
         {status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <div className="text-4xl">📹</div>
@@ -281,6 +267,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         </div>
         <button
           onClick={() => {
+            callOpenRef.current = true;
             setIsInitiator(true);
             setCallOpen(true);
           }}
@@ -299,6 +286,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
           onAccept={() => {
             setIncomingCall(null);
             setIsInitiator(false);
+            callOpenRef.current = true;
             setCallOpen(true);
           }}
           onReject={() => {
@@ -342,6 +330,7 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         <VideoCall
           roomId={channelId}
           onClose={() => {
+            callOpenRef.current = false;
             setCallOpen(false);
             setIsInitiator(false);
           }}

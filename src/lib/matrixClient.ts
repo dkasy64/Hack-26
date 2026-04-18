@@ -82,7 +82,6 @@ function normalizeRegisterLocalpart(input: string): string {
   return colonIndex >= 0 ? username.slice(0, colonIndex) : username;
 }
 
-// Singleton — call initClient() once at app startup
 let client: sdk.MatrixClient | null = null;
 
 export function getClient(): sdk.MatrixClient {
@@ -204,7 +203,6 @@ export async function loginWithPassword(
   const normalizedHomeserver = normalizeHomeserver(homeserver);
   const normalizedUsername = normalizeUsername(username).trim();
 
-  // Temporary client just for login — no storage needed yet
   const tempClient = sdk.createClient({ baseUrl: normalizedHomeserver });
 
   let response: Awaited<ReturnType<typeof tempClient.loginWithPassword>>;
@@ -217,7 +215,6 @@ export async function loginWithPassword(
     throw error;
   }
 
-  // Re-create with full credentials + in-memory store
   client = sdk.createClient({
     baseUrl: normalizedHomeserver,
     accessToken: response.access_token,
@@ -280,7 +277,6 @@ export async function registerWithPassword(
     throw new Error(body.error ?? 'Registration failed');
   }
 
-  // After register, login to get a real access token
   return loginWithPassword(username, password, normalizedHomeserver);
 }
 
@@ -291,24 +287,18 @@ export interface CreateSpaceOptions {
   topic?: string;
 }
 
-/**
- * Creates a Matrix "Space" (private, invite-only room).
- * Returns the new room's roomId.
- */
 export async function createSpace(options: CreateSpaceOptions): Promise<string> {
   const c = getClient();
 
   const result = await c.createRoom({
     name: options.name,
     topic: options.topic,
-    preset: sdk.Preset.PrivateChat,   // invite-only by default
-    visibility: sdk.Visibility.Private,
+    preset: sdk.Preset.PublicChat,
+    visibility: sdk.Visibility.Public,
     creation_content: {
-      // Mark as a Space per MSC1772
       type: 'm.space',
     },
     power_level_content_override: {
-      // Room creator is admin (100)
       users_default: 0,
       events_default: 50,
     },
@@ -317,9 +307,6 @@ export async function createSpace(options: CreateSpaceOptions): Promise<string> 
   return result.room_id;
 }
 
-/**
- * Creates a standard text channel inside a Space.
- */
 export async function createChannel(
   spaceRoomId: string,
   channelName: string
@@ -328,11 +315,10 @@ export async function createChannel(
 
   const result = await c.createRoom({
     name: channelName,
-    preset: sdk.Preset.PrivateChat,
-    visibility: sdk.Visibility.Private,
+    preset: sdk.Preset.PublicChat,
+    visibility: sdk.Visibility.Public,
   });
 
-  // Link channel as child of the Space
   await c.sendStateEvent(
     spaceRoomId,
     'm.space.child' as any,
@@ -340,7 +326,6 @@ export async function createChannel(
     result.room_id
   );
 
-  // Keep channel membership aligned with its parent space.
   await inviteSpaceMembersToRoom(spaceRoomId, result.room_id);
 
   return result.room_id;
@@ -414,7 +399,6 @@ export async function inviteUserToSpace(spaceRoomId: string, userIdOrLocalpart: 
 
   await inviteUserToRoomIfNeeded(spaceRoomId, userId);
 
-  // Also invite to every child channel so space membership is reflected across channels.
   const channels = getChannelsInSpace(spaceRoomId);
   for (const channel of channels) {
     await inviteUserToRoomIfNeeded(channel.roomId, userId);
@@ -659,10 +643,6 @@ export async function sendMessage(roomId: string, body: string): Promise<void> {
   await getClient().sendTextMessage(roomId, body);
 }
 
-/**
- * Register a listener for new messages in a room.
- * Returns an unsubscribe function — call it in useEffect cleanup.
- */
 export function onRoomMessage(
   roomId: string,
   handler: (event: sdk.MatrixEvent, room: sdk.Room) => void
@@ -680,9 +660,6 @@ export function onRoomMessage(
   return () => c.off(sdk.RoomEvent.Timeline, listener);
 }
 
-/**
- * Returns past messages for a room (up to `limit`).
- */
 export function getRoomHistory(
   roomId: string,
   limit = 50
