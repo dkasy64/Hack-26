@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
-import { sendMessage, sendImageMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile, resolveMxcAvatarUrl } from '../lib/matrixClient';
+import { sendMessage, sendImageMessage, sendVideoMessage, onRoomMessage, getRoomHistory, getClient, getUserProfile, resolveMxcAvatarUrl } from '../lib/matrixClient';
 import { EmojiPicker } from './EmojiPicker';
 import { ProfileModal } from './ProfileModal';
 
@@ -10,6 +10,7 @@ interface Message {
   body: string;
   ts: number;
   imageUrl?: string;
+  videoUrl?: string;
 }
 
 interface Props {
@@ -231,10 +232,120 @@ function IncomingCallBanner({ caller, onAccept, onReject }: {
   );
 }
 
+// ─── Video Note Recorder ──────────────────────────────────────────────────────
+
+function VideoNoteRecorder({ channelId, onDone }: { channelId: string; onDone: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      } catch (err) {
+        console.error('Camera error:', err);
+      }
+    }
+    initCamera();
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  function startRecording() {
+    if (!streamRef.current) return;
+    chunksRef.current = [];
+    const mr = new MediaRecorder(streamRef.current, { mimeType: 'video/webm' });
+    mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    mr.start();
+    mediaRecorderRef.current = mr;
+    setRecording(true);
+    setDuration(0);
+    timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
+  }
+
+  async function stopAndSend() {
+    if (!mediaRecorderRef.current) return;
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    mediaRecorderRef.current.stop();
+    setRecording(false);
+    setUploading(true);
+
+    await new Promise<void>((resolve) => {
+      mediaRecorderRef.current!.onstop = () => resolve();
+    });
+
+    const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+    const file = new File([blob], `video-note-${Date.now()}.webm`, { type: 'video/webm' });
+
+    try {
+      await sendVideoMessage(channelId, file);
+    } catch (err) {
+      console.error('Video upload error:', err);
+    } finally {
+      setUploading(false);
+      onDone();
+    }
+  }
+
+  return (
+    <div className="absolute bottom-20 left-4 right-4 z-10 overflow-hidden rounded-xl border border-[#404249] bg-[#1e1f22] shadow-2xl">
+      <div className="flex h-9 items-center justify-between border-b border-[#404249] px-3">
+        <span className="text-xs font-semibold text-white">
+          {uploading ? 'Uploading...' : recording ? `Recording ${duration}s` : 'Video Note'}
+        </span>
+        <button onClick={onDone} className="text-[#949ba4] hover:text-white text-xs">✕</button>
+      </div>
+      <div className="relative h-40 bg-black">
+        <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+        {recording && (
+          <div className="absolute top-2 left-2 flex items-center gap-1">
+            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-xs text-white font-semibold">{duration}s</span>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-center gap-3 p-3">
+        {!recording ? (
+          <button
+            onClick={startRecording}
+            disabled={uploading}
+            className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+          >
+            <div className="h-2.5 w-2.5 rounded-full bg-white" />
+            Record
+          </button>
+        ) : (
+          <button
+            onClick={stopAndSend}
+            className="flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+          >
+            <div className="h-2.5 w-2.5 rounded bg-white" />
+            Stop & Send
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ChatWindow({ channelId, matrixClient }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
   const [isInitiator, setIsInitiator] = useState(false);
   const [incomingCall, setIncomingCall] = useState<{ caller: string } | null>(null);
@@ -290,7 +401,11 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
     if (!file || !channelId) return;
     setUploading(true);
     try {
-      await sendImageMessage(channelId, file);
+      if (file.type.startsWith('video/')) {
+        await sendVideoMessage(channelId, file);
+      } else {
+        await sendImageMessage(channelId, file);
+      }
     } catch (err) {
       console.error('Upload error:', err);
     } finally {
@@ -358,6 +473,10 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
         <div ref={bottomRef} />
       </div>
 
+      {showVideoRecorder && channelId && (
+        <VideoNoteRecorder channelId={channelId} onDone={() => setShowVideoRecorder(false)} />
+      )}
+
       <div className="px-4 pb-6 pt-2">
         <div className="relative flex items-center gap-2 rounded-lg bg-[#383a40] px-4 py-2.5">
           {showEmojiPicker && (
@@ -390,8 +509,17 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             className="rounded bg-[#2d2f35] px-3 py-2 text-sm text-[#c7c9cc] hover:bg-[#3b3e45] disabled:opacity-50"
+            title="Attach file"
           >
             {uploading ? '⏳' : '📎'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowVideoRecorder((v) => !v)}
+            className={`rounded px-3 py-2 text-sm hover:bg-[#3b3e45] ${showVideoRecorder ? 'bg-red-600 text-white' : 'bg-[#2d2f35] text-[#c7c9cc]'}`}
+            title="Video note"
+          >
+            🎥
           </button>
           <input
             ref={inputRef}
@@ -434,11 +562,14 @@ export function ChatWindow({ channelId, matrixClient }: Props) {
 function eventToMessage(event: MatrixEvent): Message {
   const content = event.getContent();
   let imageUrl: string | undefined;
+  let videoUrl: string | undefined;
 
   if (content.msgtype === 'm.image' && content.url) {
-    try {
-      imageUrl = resolveMxcAvatarUrl(content.url) ?? undefined;
-    } catch {}
+    try { imageUrl = resolveMxcAvatarUrl(content.url) ?? undefined; } catch {}
+  }
+
+  if (content.msgtype === 'm.video' && content.url) {
+    try { videoUrl = resolveMxcAvatarUrl(content.url) ?? undefined; } catch {}
   }
 
   return {
@@ -447,6 +578,7 @@ function eventToMessage(event: MatrixEvent): Message {
     body: content.body ?? '',
     ts: event.getTs(),
     imageUrl,
+    videoUrl,
   };
 }
 
@@ -475,7 +607,14 @@ function MessageRow({ message, myUserId, onClickUsername }: { message: Message; 
           </button>
           <span className="text-xs text-[#6d6f78]">{time}</span>
         </div>
-        {message.imageUrl ? (
+        {message.videoUrl ? (
+          <video
+            src={message.videoUrl}
+            controls
+            className="mt-1 max-w-xs rounded-lg"
+            style={{ maxHeight: '240px' }}
+          />
+        ) : message.imageUrl ? (
           <img
             src={message.imageUrl}
             alt={message.body}
