@@ -1,8 +1,3 @@
-/**
- * TEAMMATE A — Channel list for the active Space (left column, 240px)
- * TEAMMATE B — Wire up createSpace() / createChannel() calls here
- */
-
 import { useState } from 'react';
 import type { Channel, Space } from '../App';
 import { createSpace, createChannel } from '../lib/matrixClient';
@@ -14,6 +9,7 @@ interface Props {
   onSelectChannel: (id: string) => void;
   activeSpaceId: string | null;
   onSpaceCreated: (space: Space) => void;
+  onChannelCreated: (channel: Channel) => void;
 }
 
 export function ChannelList({
@@ -23,7 +19,8 @@ export function ChannelList({
   onSelectChannel,
   activeSpaceId,
   onSpaceCreated,
-}: Props) { // matrixClient removed — createSpace/createChannel use the singleton client
+  onChannelCreated,
+}: Props) {
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpaceName, setNewSpaceName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
@@ -39,20 +36,18 @@ export function ChannelList({
 
   async function handleCreateChannel() {
     if (!newChannelName.trim() || !activeSpaceId) return;
-    await createChannel(activeSpaceId, newChannelName.trim());
+    const roomId = await createChannel(activeSpaceId, newChannelName.trim());
+    onChannelCreated({ id: roomId, name: newChannelName.trim(), spaceId: activeSpaceId });
     setNewChannelName('');
     setCreatingChannel(false);
-    // TODO: Teammate B — refresh channel list via sync event
   }
 
   return (
     <aside className="flex w-60 flex-col bg-[#2b2d31]">
-      {/* Space header */}
       <div className="flex h-12 items-center justify-between border-b border-[#1e1f22] px-4 shadow-sm">
         <span className="font-semibold text-white truncate">{spaceName || 'Select a Space'}</span>
       </div>
 
-      {/* Create Space button (shown when no space selected) */}
       {!activeSpaceId && (
         <div className="p-3">
           {creatingSpace ? (
@@ -85,7 +80,6 @@ export function ChannelList({
         </div>
       )}
 
-      {/* Channel list */}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         <div className="mb-1 flex items-center justify-between px-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-[#949ba4]">
@@ -136,7 +130,6 @@ export function ChannelList({
         ))}
       </div>
 
-      {/* User info bar at bottom */}
       <div className="flex h-14 items-center gap-2 bg-[#232428] px-2">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
           U
