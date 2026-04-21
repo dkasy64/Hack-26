@@ -1,4 +1,4 @@
-# Me-Cord: Discord Remix — Quickstart
+# Me-Cord: A Discord Remix — Quickstart
 
 A Discord-style chat app built with React + Electron + Matrix Synapse.
 
